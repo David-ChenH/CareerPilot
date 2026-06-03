@@ -1,0 +1,12 @@
+version: 1
+domains:
+  - apply.careers.microsoft.com
+content_selector: main
+heading_selector: "h1, h2, h3, h4, h5, h6"
+quality_checks:
+  min_characters: 500
+  max_characters: 20000
+  expected_signals:
+    - responsibilities
+    - qualifications
+  excluded_signals: []

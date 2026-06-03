@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+node_modules/
+frontend/dist/
+
+data/
+*.sqlite3
+*.db
+
+*.egg-info/
+.DS_Store
+
+# Private user profile. Copy app/memory/profile.example.yaml to this path locally.
+app/memory/profile.local.yaml
+app/memory/profile.yaml
+
+# Local secrets and environment files.
+.env
+.env.*
+!.env.example

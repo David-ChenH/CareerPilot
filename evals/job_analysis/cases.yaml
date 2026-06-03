@@ -1,0 +1,75 @@
+cases:
+  - id: ai-platform-backend-strong-fit
+    name: "Senior backend role building AI platform workflows"
+    description: "Should be recommended because it combines backend ownership, workflow orchestration, cloud, and LLM platform direction."
+    source_url: "https://example.com/jobs/ai-platform-backend"
+    job_description: |
+      Senior Backend Engineer, AI Platform
+      Company: Example AI Cloud
+      Location: Seattle or Remote
+
+      Build production backend services for an internal AI agent platform. You will design APIs,
+      distributed workflow orchestration, Python services, cloud infrastructure integrations, and
+      observability for long-running LLM tool execution. Experience with AWS, serverless systems,
+      Kubernetes, and vector databases is helpful.
+    expectations:
+      min_score: 70
+      priority: "high"
+      recommendation: "apply"
+      required:
+        - field: "parsed.skills"
+          terms: ["backend", "workflow orchestration", "cloud", "llm"]
+        - field: "fit.strong_matches"
+          terms: ["Backend architecture", "Workflow orchestration"]
+      forbidden:
+        - field: "fit.gaps"
+          terms: ["Kubernetes", "Docker", "RAG"]
+        - field: "fit.concerns"
+          terms: ["research-oriented", "frontend-heavy", "prompt-engineering-heavy"]
+
+  - id: research-scientist-low-fit
+    name: "Research scientist role with PhD-heavy requirements"
+    description: "Should be treated as low fit for a backend/platform transition because the role centers on research, publication, and PhD depth."
+    source_url: "https://example.com/jobs/research-scientist"
+    job_description: |
+      Research Scientist, Foundation Models
+      Company: Example Research Lab
+      Location: San Francisco
+
+      We are looking for a PhD research scientist to invent new model architectures,
+      publish papers at top conferences, and lead novel training research. The role requires
+      deep expertise in machine learning theory, large-scale experiments, and research publications.
+      Backend service work is minimal.
+    expectations:
+      max_score: 64
+      priority: "low"
+      recommendation: "skip"
+      required:
+        - field: "fit.concerns"
+          terms: ["research-oriented"]
+      forbidden:
+        - field: "fit.summary"
+          terms: ["Strong fit"]
+
+  - id: frontend-prompt-tooling-low-fit
+    name: "Frontend prompt-tooling role"
+    description: "Should be penalized because it is frontend and prompt-tooling heavy without enough backend/platform ownership."
+    source_url: "https://example.com/jobs/frontend-prompt-tooling"
+    job_description: |
+      AI Prompt Tooling Frontend Engineer
+      Company: Example Productivity
+      Location: Remote
+
+      Build React interfaces for prompt engineers to create, label, and organize prompt templates.
+      Most work is frontend UI development, user-facing workflow screens, prompt library management,
+      and data labeling operations support. Backend infrastructure ownership is limited.
+    expectations:
+      max_score: 60
+      priority: "low"
+      recommendation: "skip"
+      required:
+        - field: "fit.concerns"
+          terms: ["frontend-heavy", "prompt-engineering-heavy"]
+      forbidden:
+        - field: "fit.summary"
+          terms: ["Strong fit"]

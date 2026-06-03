@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CareerPilot</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260520-url-feedback" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Local-first AI career workbench</p>
+        <h1>CareerPilot</h1>
+      </div>
+      <a class="docs-link" href="/docs">API Docs</a>
+    </header>
+
+    <main class="app-shell">
+      <section class="analysis-panel">
+        <div class="section-heading">
+          <h2>Analyze a Job</h2>
+          <p>Paste a job description or fetch one from a job link.</p>
+        </div>
+
+        <form id="analysis-form">
+          <label for="job-url">Job link</label>
+          <div class="url-row">
+            <input
+              id="job-url"
+              name="url"
+              type="url"
+              placeholder="https://company.example/jobs/senior-backend-engineer"
+            />
+            <button id="fetch-url" type="button">Fetch link</button>
+          </div>
+          <div id="analysis-status" class="status" hidden></div>
+          <div id="analysis-error" class="error" hidden></div>
+
+          <label for="job-description">Job description</label>
+          <textarea
+            id="job-description"
+            name="description"
+            placeholder="Senior Backend Engineer, AI Platform&#10;Company: Example AI&#10;Location: Remote&#10;&#10;Build Python backend APIs and distributed workflow orchestration for LLM agent systems..."
+            required
+          ></textarea>
+
+          <div class="form-row">
+            <label class="checkbox-label">
+              <input id="save-job" type="checkbox" checked />
+              Save job to tracker
+            </label>
+            <button type="submit">Analyze</button>
+          </div>
+        </form>
+
+        <section id="analysis-result" class="result-panel" hidden></section>
+      </section>
+
+      <section class="tracker-panel">
+        <div class="section-heading">
+          <h2>Application Tracker</h2>
+          <p>Saved jobs and application status.</p>
+        </div>
+        <div class="toolbar">
+          <button id="refresh-jobs" type="button">Refresh</button>
+        </div>
+        <div id="jobs-list" class="jobs-list"></div>
+        <section id="job-detail" class="job-detail" hidden></section>
+      </section>
+    </main>
+
+    <script src="/static/app.js?v=20260520-url-feedback"></script>
+  </body>
+</html>

@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .label {
+    @apply block text-sm font-bold text-ink;
+  }
+
+  .input {
+    @apply min-h-11 w-full min-w-0 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15;
+  }
+
+  .textarea {
+    @apply min-h-[360px] w-full resize-y rounded-md border border-line bg-white p-3 font-mono text-sm leading-6 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15;
+  }
+
+  .select {
+    @apply min-h-10 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .link-button,
+  .icon-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .primary-button {
+    @apply border-teal-700 bg-teal-700 text-white hover:bg-teal-800;
+  }
+
+  .secondary-button {
+    @apply border-slate-300 bg-white text-slate-900 hover:bg-slate-50;
+  }
+
+  .danger-button {
+    @apply border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100;
+  }
+
+  .link-button {
+    @apply border-teal-100 bg-teal-50 text-teal-800 hover:bg-teal-100;
+  }
+
+  .icon-button {
+    @apply h-10 w-10 shrink-0 border-slate-300 bg-white p-0 text-slate-800 hover:bg-slate-50;
+  }
+}
+
+@media (max-width: 640px) {
+  .textarea {
+    min-height: 280px;
+  }
+}

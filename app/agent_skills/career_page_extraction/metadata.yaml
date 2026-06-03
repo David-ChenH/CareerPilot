@@ -1,0 +1,5 @@
+id: career_page_extraction
+version: 1
+summary: Extract a complete job posting from a careers page.
+capabilities:
+  - extract_job_posting

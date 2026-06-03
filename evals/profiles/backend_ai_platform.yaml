@@ -1,0 +1,69 @@
+current_role:
+  title: "Senior Backend Engineer"
+  company: "Example Cloud"
+  experience_years: 6
+
+positioning:
+  summary: "Senior backend/platform engineer with cloud, workflow orchestration, API, and distributed systems experience, moving toward production AI platform and agentic systems engineering."
+  target_identity: "Backend/workflow engineer evolving into a production AI platform and agentic systems engineer."
+
+core_background:
+  - "Backend systems engineering"
+  - "Workflow orchestration"
+  - "Distributed cloud services"
+  - "Serverless systems"
+  - "Platform applications"
+
+experience_highlights:
+  - "Built and maintained pricing and workflow systems for cloud infrastructure products"
+  - "Designed service APIs and backend orchestration logic"
+  - "Worked with Step Functions and Lambda-style workflow systems"
+  - "Operated distributed backend services with cross-team integrations"
+
+technical_strengths:
+  - "Python"
+  - "Java"
+  - "Backend architecture"
+  - "AWS cloud ecosystem"
+  - "Workflow orchestration"
+  - "API and service design"
+  - "Distributed systems fundamentals"
+  - "Infrastructure-aware backend engineering"
+
+target_roles:
+  - "AI platform engineer"
+  - "Agentic systems engineer"
+  - "LLM infrastructure engineer"
+  - "Workflow automation platform engineer"
+  - "Senior backend engineer"
+  - "Distributed systems engineer"
+  - "Platform infrastructure engineer"
+
+career_goals:
+  - "Move toward production AI platform, agentic systems, workflow orchestration, or infrastructure teams"
+  - "Apply to senior backend, AI platform, and distributed systems roles"
+
+learning_goals:
+  - "Production-grade agentic architectures"
+  - "Modern AI infrastructure patterns"
+  - "Kubernetes and container orchestration basics"
+  - "Distributed AI system design"
+
+must_have:
+  - "Backend/platform-heavy role"
+  - "Strong engineering systems ownership"
+  - "AI, agent, or LLM relevance"
+  - "Production engineering depth"
+
+nice_to_have:
+  - "Cloud-native platform work"
+  - "Workflow orchestration"
+  - "Distributed systems"
+  - "Internal platform/tooling"
+  - "Agentic systems or LLM infrastructure"
+
+avoid:
+  - "Pure frontend roles"
+  - "Prompt-engineering-only roles"
+  - "Data labeling or AI operations roles"
+  - "Roles with no backend/platform depth"
