@@ -241,6 +241,18 @@ export function App() {
 
   const isAnalyzing = analyzeMutation.isPending || fetchMutation.isPending;
 
+  function updateJobUrl(nextUrl: string) {
+    setJobUrl(nextUrl);
+    setBackgroundTaskId(null);
+    setRegeneratingJobId(null);
+    setNotice(null);
+    if (inputMode === "link") {
+      setAnalysis(null);
+      setDescription("");
+      setShowFetchedText(false);
+    }
+  }
+
   function submitAnalysis() {
     setNotice(null);
     setAnalysis(null);
@@ -261,6 +273,7 @@ export function App() {
   function submitFetch() {
     setNotice(null);
     setAnalysis(null);
+    setBackgroundTaskId(null);
     const trimmed = jobUrl.trim();
     if (!trimmed) {
       setNotice("Paste a job link before fetching.");
@@ -277,6 +290,7 @@ export function App() {
 
   function submitBackgroundSave() {
     setNotice(null);
+    setBackgroundTaskId(null);
     const trimmed = jobUrl.trim();
     if (!trimmed) {
       setNotice("Paste a job link before starting a background save.");
@@ -340,7 +354,7 @@ export function App() {
               submitFetch={submitFetch}
               setDescription={setDescription}
               setInputMode={setInputMode}
-              setJobUrl={setJobUrl}
+              setJobUrl={updateJobUrl}
               setShowFetchedText={setShowFetchedText}
               analyzePending={analyzeMutation.isPending}
               onCreatePrepPlan={(currentAnalysis) => {
