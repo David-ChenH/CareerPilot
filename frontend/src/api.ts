@@ -30,7 +30,8 @@ import type {
   ResumeExtractRequest,
   ResumeExtractResponse,
   ResumeGenerateRequest,
-  SaveAnalyzedJobRequest
+  SaveAnalyzedJobRequest,
+  UpdateJobAnalysisRequest
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -107,6 +108,13 @@ export function getBackgroundJobIngest(taskId: string): Promise<AgentTask> {
 export function saveAnalyzedJob(body: SaveAnalyzedJobRequest): Promise<JobRecord> {
   return request<JobRecord>("/jobs/save-analysis", {
     method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export function updateJobAnalysis(jobId: number, body: UpdateJobAnalysisRequest): Promise<JobRecord> {
+  return request<JobRecord>(`/jobs/${jobId}/analysis`, {
+    method: "PATCH",
     body: JSON.stringify(body)
   });
 }

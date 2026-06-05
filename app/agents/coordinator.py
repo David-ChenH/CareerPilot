@@ -243,6 +243,31 @@ class JobSearchCoordinator:
             )
         )
 
+    def update_saved_job_analysis(
+        self,
+        job_id: int,
+        analysis: JobAnalysisResponse,
+        source_url: str | None = None,
+    ) -> JobRecord | None:
+        parsed_job = analysis.parsed_job
+        profile = self.profile_store.load()
+        return self.repository.update_job_analysis(
+            job_id,
+            JobRecord(
+                title=parsed_job.title,
+                source_url=source_url,
+                company=parsed_job.company,
+                location=parsed_job.location,
+                description=parsed_job.description,
+                skills=parsed_job.skills,
+                fit_score=analysis.fit.score,
+                priority=analysis.fit.priority,
+                application_type=_classify_application_type(profile, parsed_job.company, source_url),
+                analysis=analysis.model_dump(exclude={"saved_job"}),
+                analysis_provenance=_analysis_provenance(analysis),
+            ),
+        )
+
     def chat_about_job(self, job_id: int, request: JobChatRequest) -> JobChatResponse | None:
         detail = self.repository.get_job(job_id)
         if detail is None:

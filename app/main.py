@@ -326,6 +326,12 @@ class SaveAnalyzedJobRequest(BaseModel):
     source_url: str | None = None
 
 
+class UpdateJobAnalysisRequest(BaseModel):
+    analysis: JobAnalysisResponse
+    source_url: str | None = None
+    reason: str | None = None
+
+
 class AnalysisFeedbackRequest(BaseModel):
     analysis: JobAnalysisResponse
     feedback_type: str
@@ -399,6 +405,18 @@ def get_background_job_ingest(task_id: str) -> AgentTask:
 @app.post("/jobs/save-analysis", response_model=JobRecord)
 def save_analyzed_job(request: SaveAnalyzedJobRequest) -> JobRecord:
     return coordinator.save_analysis(request.analysis, source_url=request.source_url)
+
+
+@app.patch("/jobs/{job_id}/analysis", response_model=JobRecord)
+def update_saved_job_analysis(job_id: int, request: UpdateJobAnalysisRequest) -> JobRecord:
+    updated = coordinator.update_saved_job_analysis(
+        job_id=job_id,
+        analysis=request.analysis,
+        source_url=request.source_url,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return updated
 
 
 @app.post("/jobs/analysis/feedback", response_model=AnalysisFeedbackResponse)

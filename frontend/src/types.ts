@@ -287,6 +287,12 @@ export type SaveAnalyzedJobRequest = {
   source_url?: string | null;
 };
 
+export type UpdateJobAnalysisRequest = {
+  analysis: JobAnalysisResponse;
+  source_url?: string | null;
+  reason?: string | null;
+};
+
 export type AnalysisFeedbackType = "accurate" | "missing_gap" | "wrong_concern" | "too_generic" | "other";
 
 export type AnalysisFeedbackRequest = {

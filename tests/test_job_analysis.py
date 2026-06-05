@@ -1315,6 +1315,47 @@ def test_reanalysis_refreshes_existing_job_analysis_payload(tmp_path: Path) -> N
     assert versions[1]["schema_version"] == detail.job.analysis_schema_version
 
 
+def test_explicit_analysis_update_preserves_application_state(tmp_path: Path) -> None:
+    repository = JobRepository(tmp_path / "jobs.sqlite3")
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=repository,
+    )
+    saved = repository.save_job(
+        JobRecord(
+            source_url="https://example.com/jobs/backend",
+            title="Backend Engineer",
+            company="Example AI",
+            description="Backend Engineer\nCompany: Example AI\nBuild backend services.",
+            skills=["Python"],
+            fit_score=45,
+            priority="medium",
+            status=ApplicationStatus.INTERVIEWING,
+            analysis={"fit": {"score": 45}},
+        )
+    )
+    preview = coordinator.analyze(
+        JobAnalysisRequest(
+            save=False,
+            use_llm=False,
+            use_llm_guidance=False,
+            source_url=saved.source_url,
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Python workflow services.",
+        )
+    )
+
+    updated = coordinator.update_saved_job_analysis(saved.id, preview, source_url=saved.source_url)
+
+    assert updated is not None
+    assert updated.id == saved.id
+    assert updated.status == ApplicationStatus.INTERVIEWING
+    assert updated.analysis is not None
+    assert updated.analysis["fit"]["score"] == preview.fit.score
+    versions = repository.list_job_analysis_versions(saved.id)
+    assert len(versions) == 2
+    assert versions[-1]["analysis"]["fit"]["score"] == preview.fit.score
+
+
 def test_metadata_refresh_does_not_create_fake_analysis_revision(tmp_path: Path) -> None:
     repository = JobRepository(tmp_path / "jobs.sqlite3")
     saved = repository.save_job(

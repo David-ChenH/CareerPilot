@@ -82,6 +82,25 @@ class JobRepository:
             job.id = cursor.lastrowid
             return job
 
+    def update_job_analysis(self, job_id: int, incoming: JobRecord) -> JobRecord | None:
+        incoming.analysis, incoming.analysis_schema_version = migrate_analysis_payload(
+            incoming.analysis,
+            incoming.analysis_schema_version or CURRENT_ANALYSIS_SCHEMA_VERSION,
+        )
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {JOB_SELECT_COLUMNS}
+                FROM jobs
+                WHERE id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+            existing = self._row_to_job(row) if row else None
+            if existing is None:
+                return None
+            return self._refresh_existing_job(conn, existing, incoming)
+
     def list_jobs(self) -> list[JobRecord]:
         with self._connect() as conn:
             rows = conn.execute(

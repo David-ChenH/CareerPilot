@@ -26,6 +26,7 @@ The goal is to demonstrate how agentic applications can be built with controlled
 - Identify strengths, skill gaps, concerns, resume emphasis, and prep topics.
 - Save jobs into a local SQLite application tracker.
 - Regenerate saved analysis while preserving application status and analysis history.
+- Refresh saved-job analysis through a review-first flow before applying updates.
 - Chat globally across profile, saved jobs, and local history.
 - Chat about a specific saved job or analysis preview.
 - Enable optional OpenAI web search for current company/interview context.
@@ -84,6 +85,8 @@ flowchart LR
 ```
 
 When `save=false`, the workflow stops after `analyze_job` and returns the analysis as a task artifact for the preview UI. When `save=true`, it continues through `save_job` and persists the tracker record.
+
+Saved-job refresh uses the same preview path. The refreshed candidate analysis is reviewed on the Analyze page, then applied through a resource update to the saved job analysis.
 
 The backend stores:
 

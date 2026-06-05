@@ -86,6 +86,8 @@ The Assistant does not scrape the page directly. It routes intent to the allow-l
 
 `save=false` runs the same approved workflow without the `save_job` node. This keeps slow link analysis observable without forcing a tracker write. `save=true` includes the persistence node and stores the saved application record.
 
+Saved-job refresh follows the same review-first rule. The UI starts a `save=false` analysis run from the saved job source link, opens the Analyze page, and waits for the user to review the candidate analysis. The durable update happens only when the user confirms through `PATCH /jobs/{job_id}/analysis`.
+
 The UI receives two observable runtime artifacts:
 
 - `workflow_graph`: the workflow nodes, edges, version, and final task statuses.
@@ -183,7 +185,7 @@ URL analysis persists a typed `ExtractedJobPosting` artifact with metadata, orde
 
 Browser extraction also maintains local learned selector observations at `data/career_page_selectors.local.json`. Observations contain safe CSS selectors, structural validation evidence, and gated semantic validation evidence, not executable generated code. Extraction precedence is: promoted learned selector, optional reviewed override, then bounded discovery. If a promoted selector falls below the quality threshold, the extractor records a failure and rediscovers the best content root. Semantic validation is attempted only for new, promotion-bound, or drift-replacement selectors; if it is required but unavailable or failed, the selector remains a candidate rather than being promoted. Background tasks expose the selected `extraction_strategy` while preserving the historical `extraction_recipe` compatibility artifact.
 
-Saved-job regeneration is an explicit background command: `POST /jobs/{job_id}/regenerate-analysis`. It fetches the stored source URL, runs the current analysis workflow, updates the existing tracker projection, and appends an analysis-version snapshot. Application status remains unchanged.
+Saved-job analysis updates are explicit resource updates: `PATCH /jobs/{job_id}/analysis`. The route applies a reviewed analysis candidate to the saved job, preserves application status, updates the current projection, and appends an analysis-version snapshot. The older regeneration endpoint remains available for compatibility, but the product UI uses review-first refresh.
 
 The SQLite adapter currently owns these tables as one local persistence boundary. As the domain grows, split job tracking, preparation, resume, and profile-proposal repositories behind the same application-layer interfaces before adding cloud persistence.
 

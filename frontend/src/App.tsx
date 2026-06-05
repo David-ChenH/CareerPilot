@@ -48,7 +48,6 @@ import {
   listGlobalChatSessions,
   listJobs,
   listPrepPlans,
-  regenerateJobAnalysis,
   refineProfileProposal,
   saveAnalysisFeedback,
   saveAnalyzedJob,
@@ -58,6 +57,7 @@ import {
   startBackgroundJobIngest,
   streamJobChat,
   updatePrepTask,
+  updateJobAnalysis,
   updateJobStatus
 } from "./api";
 import type {
@@ -84,6 +84,7 @@ type InputMode = "link" | "paste";
 type AppView = "dashboard" | "analyze" | "applications" | "prep" | "resume" | "assistant" | "profile" | "settings";
 type PrepSeed = { nonce: number; focus: string; jobId?: number | null };
 type ResumeSeed = { nonce: number; roleTitle: string; company?: string | null; jobId?: number | null; notes: string };
+type AnalysisRefreshContext = { jobId: number; title: string; sourceUrl: string };
 
 const statuses: ApplicationStatus[] = [
   "discovered",
@@ -108,6 +109,7 @@ export function App() {
   const [resumeSeed, setResumeSeed] = useState<ResumeSeed | null>(null);
   const [backgroundTaskId, setBackgroundTaskId] = useState<string | null>(null);
   const [regeneratingJobId, setRegeneratingJobId] = useState<number | null>(null);
+  const [analysisRefreshContext, setAnalysisRefreshContext] = useState<AnalysisRefreshContext | null>(null);
 
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
@@ -157,20 +159,6 @@ export function App() {
     }
   });
 
-  const regenerateAnalysisMutation = useMutation({
-    mutationFn: regenerateJobAnalysis,
-    onMutate: (jobId) => {
-      setRegeneratingJobId(jobId);
-    },
-    onSuccess: (task) => {
-      setBackgroundTaskId(task.id);
-      setNotice("Analysis regeneration started. CareerPilot will refresh this saved job when the background workflow completes.");
-    },
-    onError: () => {
-      setRegeneratingJobId(null);
-    }
-  });
-
   const saveAnalysisMutation = useMutation({
     mutationFn: (currentAnalysis: JobAnalysisResponse) =>
       saveAnalyzedJob({
@@ -183,6 +171,24 @@ export function App() {
       setNotice("Saved job to tracker.");
       await queryClient.invalidateQueries({ queryKey: ["jobs"] });
       await queryClient.invalidateQueries({ queryKey: ["jobs", savedJob.id] });
+    }
+  });
+
+  const applyAnalysisMutation = useMutation({
+    mutationFn: ({ jobId, currentAnalysis, sourceUrl }: { jobId: number; currentAnalysis: JobAnalysisResponse; sourceUrl: string | null }) =>
+      updateJobAnalysis(jobId, {
+        analysis: currentAnalysis,
+        source_url: sourceUrl,
+        reason: "user_confirmed_refresh"
+      }),
+    onSuccess: async (savedJob) => {
+      setAnalysis((current) => (current ? { ...current, saved_job: savedJob } : current));
+      setSelectedJobId(savedJob.id);
+      setAnalysisRefreshContext(null);
+      setNotice("Saved job analysis updated.");
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs", savedJob.id] });
+      setActiveView("applications");
     }
   });
 
@@ -215,7 +221,8 @@ export function App() {
       setAnalysis(task.artifacts.analysis);
       setDescription(task.artifacts.analysis.parsed_job.description);
       setShowFetchedText(false);
-      setNotice("Analysis complete.");
+      setRegeneratingJobId(null);
+      setNotice(analysisRefreshContext ? "Refreshed analysis preview ready. Review it before updating the saved job." : "Analysis complete.");
       return;
     }
 
@@ -227,7 +234,7 @@ export function App() {
     setRegeneratingJobId(null);
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["jobs", task.artifacts.saved_job.id] });
-  }, [backgroundTaskQuery.data, queryClient]);
+  }, [analysisRefreshContext, backgroundTaskQuery.data, queryClient]);
 
   useEffect(() => {
     if (backgroundTaskQuery.data?.status === "failed") {
@@ -239,9 +246,9 @@ export function App() {
     analyzeMutation.error?.message ||
     backgroundPreviewMutation.error?.message ||
     backgroundIngestMutation.error?.message ||
-    regenerateAnalysisMutation.error?.message ||
     backgroundTaskQuery.error?.message ||
     saveAnalysisMutation.error?.message ||
+    applyAnalysisMutation.error?.message ||
     jobsQuery.error?.message ||
     jobDetailQuery.error?.message ||
     statusMutation.error?.message ||
@@ -254,6 +261,7 @@ export function App() {
     setJobUrl(nextUrl);
     setBackgroundTaskId(null);
     setRegeneratingJobId(null);
+    setAnalysisRefreshContext(null);
     setNotice(null);
     if (inputMode === "link") {
       setAnalysis(null);
@@ -290,6 +298,34 @@ export function App() {
     }
     backgroundPreviewMutation.mutate({
       url: trimmed,
+      save: false,
+      use_browser_fallback: true,
+      use_llm: true,
+      use_llm_guidance: true
+    });
+  }
+
+  function startRefreshPreview(job: JobRecord) {
+    if (!job.source_url) {
+      setNotice("This saved job does not have a source link. Paste its current description into Analyze Job to refresh it.");
+      return;
+    }
+    setInputMode("link");
+    setJobUrl(job.source_url);
+    setDescription("");
+    setAnalysis(null);
+    setShowFetchedText(false);
+    setBackgroundTaskId(null);
+    setSelectedJobId(null);
+    setRegeneratingJobId(job.id);
+    setAnalysisRefreshContext({
+      jobId: job.id,
+      title: job.title || "Untitled job",
+      sourceUrl: job.source_url
+    });
+    setActiveView("analyze");
+    backgroundPreviewMutation.mutate({
+      url: job.source_url,
       save: false,
       use_browser_fallback: true,
       use_llm: true,
@@ -347,15 +383,26 @@ export function App() {
               fetchPending={backgroundPreviewMutation.isPending}
               backgroundTask={backgroundTaskQuery.data ?? null}
               backgroundSavePending={backgroundIngestMutation.isPending}
+              refreshContext={analysisRefreshContext}
               inputMode={inputMode}
               isAnalyzing={isAnalyzing}
               jobUrl={jobUrl}
               notice={notice}
               savePending={saveAnalysisMutation.isPending}
+              applyUpdatePending={applyAnalysisMutation.isPending}
               showFetchedText={showFetchedText}
               saveAnalysis={() => {
                 if (analysis) {
                   saveAnalysisMutation.mutate(analysis);
+                }
+              }}
+              applyAnalysisUpdate={() => {
+                if (analysis && analysisRefreshContext) {
+                  applyAnalysisMutation.mutate({
+                    jobId: analysisRefreshContext.jobId,
+                    currentAnalysis: analysis,
+                    sourceUrl: analysisRefreshContext.sourceUrl
+                  });
                 }
               }}
               submitAnalysis={submitAnalysis}
@@ -410,7 +457,7 @@ export function App() {
           detail={jobDetailQuery.data}
           isLoading={jobDetailQuery.isLoading}
           isRegenerating={regeneratingJobId === selectedJobId}
-          onRegenerate={(jobId) => regenerateAnalysisMutation.mutate(jobId)}
+          onRegenerate={startRefreshPreview}
           onClose={() => setSelectedJobId(null)}
         />
       ) : null}
@@ -1275,6 +1322,7 @@ function AnalyzeJobView({
   analyzePending,
   backgroundSavePending,
   backgroundTask,
+  refreshContext,
   description,
   fetchPending,
   inputMode,
@@ -1282,7 +1330,9 @@ function AnalyzeJobView({
   jobUrl,
   notice,
   saveAnalysis,
+  applyAnalysisUpdate,
   savePending,
+  applyUpdatePending,
   showFetchedText,
   submitAnalysis,
   submitBackgroundSave,
@@ -1299,6 +1349,7 @@ function AnalyzeJobView({
   analyzePending: boolean;
   backgroundSavePending: boolean;
   backgroundTask: AgentTask | null;
+  refreshContext: AnalysisRefreshContext | null;
   description: string;
   fetchPending: boolean;
   inputMode: InputMode;
@@ -1306,7 +1357,9 @@ function AnalyzeJobView({
   jobUrl: string;
   notice: string | null;
   saveAnalysis: () => void;
+  applyAnalysisUpdate: () => void;
   savePending: boolean;
+  applyUpdatePending: boolean;
   showFetchedText: boolean;
   submitAnalysis: () => void;
   submitBackgroundSave: () => void;
@@ -1358,6 +1411,12 @@ function AnalyzeJobView({
           </div>
 
           <Feedback notice={notice} error={activeError} />
+          {refreshContext ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <span className="font-bold">Refreshing saved job:</span> {refreshContext.title}
+              <span className="block text-xs">Review the new analysis before updating the saved tracker record.</span>
+            </div>
+          ) : null}
           {backgroundTask ? <BackgroundTaskStatus task={backgroundTask} /> : null}
 
           {inputMode === "link" && description ? (
@@ -1400,7 +1459,10 @@ function AnalyzeJobView({
           onCreatePrepPlan={() => onCreatePrepPlan(analysis)}
           onGenerateResume={() => onGenerateResume(analysis)}
           onSave={saveAnalysis}
+          onApplyUpdate={applyAnalysisUpdate}
+          refreshContext={refreshContext}
           savePending={savePending}
+          applyUpdatePending={applyUpdatePending}
           sourceUrl={jobUrl.trim() || null}
         />
       ) : (
@@ -1798,14 +1860,20 @@ function AnalysisResult({
   onCreatePrepPlan,
   onGenerateResume,
   onSave,
+  onApplyUpdate,
+  refreshContext,
   savePending,
+  applyUpdatePending,
   sourceUrl
 }: {
   analysis: JobAnalysisResponse;
   onCreatePrepPlan: () => void;
   onGenerateResume: () => void;
   onSave: () => void;
+  onApplyUpdate: () => void;
+  refreshContext: AnalysisRefreshContext | null;
   savePending: boolean;
+  applyUpdatePending: boolean;
   sourceUrl: string | null;
 }) {
   const job = analysis.parsed_job;
@@ -1883,9 +1951,14 @@ function AnalysisResult({
           <RecommendationBadge fit={fit} />
         </div>
         <div className="grid gap-3 px-4 sm:grid-cols-3">
-          <button className="primary-button justify-center" type="button" disabled={savePending || Boolean(analysis.saved_job)} onClick={onSave}>
-            {savePending ? <Loader2 className="animate-spin" size={18} /> : <BriefcaseBusiness size={18} />}
-            {analysis.saved_job ? "Saved" : "Save job"}
+          <button
+            className="primary-button justify-center"
+            type="button"
+            disabled={refreshContext ? applyUpdatePending : savePending || Boolean(analysis.saved_job)}
+            onClick={refreshContext ? onApplyUpdate : onSave}
+          >
+            {(refreshContext ? applyUpdatePending : savePending) ? <Loader2 className="animate-spin" size={18} /> : <BriefcaseBusiness size={18} />}
+            {refreshContext ? "Confirm update" : analysis.saved_job ? "Saved" : "Save job"}
           </button>
           <button className="secondary-button justify-center" type="button" onClick={onCreatePrepPlan}>
             <CalendarCheck size={18} />
@@ -2307,7 +2380,7 @@ function JobDetailDrawer({
   detail?: JobDetail;
   isLoading: boolean;
   isRegenerating: boolean;
-  onRegenerate: (jobId: number) => void;
+  onRegenerate: (job: JobRecord) => void;
   onClose: () => void;
 }) {
   const analysis = detail?.analysis;
@@ -2350,11 +2423,11 @@ function JobDetailDrawer({
                 className="secondary-button"
                 type="button"
                 disabled={isRegenerating || !job.source_url}
-                onClick={() => onRegenerate(job.id)}
-                title={job.source_url ? "Fetch the source link and generate a new saved analysis version" : "This job has no saved source link"}
+                onClick={() => onRegenerate(job)}
+                title={job.source_url ? "Fetch the source link and review a refreshed analysis before updating this saved job" : "This job has no saved source link"}
               >
                 {isRegenerating ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                {isRegenerating ? "Regenerating..." : "Regenerate analysis"}
+                {isRegenerating ? "Starting refresh..." : "Refresh analysis"}
               </button>
             </div>
 
