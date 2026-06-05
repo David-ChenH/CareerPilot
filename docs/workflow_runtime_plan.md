@@ -280,7 +280,7 @@ The agent skill explains the safe extraction strategy. An optional reviewed over
 
 ### Phase 4: CareerPilot Integration
 
-- Status: background job-link ingestion migrated onto the executor and exposed through UI workflow graph/trace artifacts.
+- Status: background job-link ingestion migrated onto the executor and exposed through UI workflow graph/trace artifacts. Link-based `Fetch & Analyze` now uses the same task path with `save=false`, so slow preview analysis shows progress and returns its final analysis artifact without writing to the tracker.
 - Preserve current API and UI behavior while replacing route-owned orchestration.
 - Add cost and cache-hit details to the UI after those runtime fields exist.
 - Add the interview-prep DAG with parallel plan branches.

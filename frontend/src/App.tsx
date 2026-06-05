@@ -37,7 +37,6 @@ import {
   deleteGlobalChatSession,
   extractResumeProfile,
   formatUnknownError,
-  fetchAndAnalyzeJob,
   getBackgroundJobIngest,
   getJob,
   getProfile,
@@ -142,13 +141,11 @@ export function App() {
     }
   });
 
-  const fetchMutation = useMutation({
-    mutationFn: fetchAndAnalyzeJob,
-    onSuccess: async (result) => {
-      setAnalysis(result);
-      setDescription(result.parsed_job.description);
-      setShowFetchedText(false);
-      setNotice("Fetched and analyzed job link.");
+  const backgroundPreviewMutation = useMutation({
+    mutationFn: startBackgroundJobIngest,
+    onSuccess: (task) => {
+      setBackgroundTaskId(task.id);
+      setNotice("Analysis started. CareerPilot will show workflow progress while it fetches and evaluates the link.");
     }
   });
 
@@ -210,7 +207,19 @@ export function App() {
 
   useEffect(() => {
     const task = backgroundTaskQuery.data;
-    if (!task || task.status !== "completed" || !task.artifacts.saved_job?.id) {
+    if (!task || task.status !== "completed") {
+      return;
+    }
+
+    if (task.input.save === false && task.artifacts.analysis) {
+      setAnalysis(task.artifacts.analysis);
+      setDescription(task.artifacts.analysis.parsed_job.description);
+      setShowFetchedText(false);
+      setNotice("Analysis complete.");
+      return;
+    }
+
+    if (!task.artifacts.saved_job?.id) {
       return;
     }
     setNotice(`Background analysis saved: ${task.artifacts.saved_job.title || "Untitled job"}.`);
@@ -228,7 +237,7 @@ export function App() {
 
   const activeError =
     analyzeMutation.error?.message ||
-    fetchMutation.error?.message ||
+    backgroundPreviewMutation.error?.message ||
     backgroundIngestMutation.error?.message ||
     regenerateAnalysisMutation.error?.message ||
     backgroundTaskQuery.error?.message ||
@@ -239,7 +248,7 @@ export function App() {
     deleteMutation.error?.message ||
     null;
 
-  const isAnalyzing = analyzeMutation.isPending || fetchMutation.isPending;
+  const isAnalyzing = analyzeMutation.isPending || backgroundPreviewMutation.isPending;
 
   function updateJobUrl(nextUrl: string) {
     setJobUrl(nextUrl);
@@ -279,7 +288,7 @@ export function App() {
       setNotice("Paste a job link before fetching.");
       return;
     }
-    fetchMutation.mutate({
+    backgroundPreviewMutation.mutate({
       url: trimmed,
       save: false,
       use_browser_fallback: true,
@@ -335,7 +344,7 @@ export function App() {
               activeError={activeError}
               analysis={analysis}
               description={description}
-              fetchPending={fetchMutation.isPending}
+              fetchPending={backgroundPreviewMutation.isPending}
               backgroundTask={backgroundTaskQuery.data ?? null}
               backgroundSavePending={backgroundIngestMutation.isPending}
               inputMode={inputMode}

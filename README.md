@@ -70,7 +70,7 @@ Important backend concepts:
 
 ## Demo Workflow
 
-The background job ingestion workflow is the first explicit agentic runtime path:
+The background job ingestion workflow is the first explicit agentic runtime path. It supports both preview analysis and durable saves:
 
 ```mermaid
 flowchart LR
@@ -82,6 +82,8 @@ flowchart LR
   fetch --> save
   analyze --> save
 ```
+
+When `save=false`, the workflow stops after `analyze_job` and returns the analysis as a task artifact for the preview UI. When `save=true`, it continues through `save_job` and persists the tracker record.
 
 The backend stores:
 

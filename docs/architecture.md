@@ -78,10 +78,13 @@ flowchart LR
 
 The same task workflow can now be started from two surfaces:
 
+- the Analyze page `Fetch & Analyze` button with `save=false`, which shows workflow progress and hydrates the analysis preview from the completed task artifact
 - the Analyze page `Save in background` button
 - the global Assistant when the user pastes a job URL and asks to analyze, save, track, or ingest it
 
 The Assistant does not scrape the page directly. It routes intent to the allow-listed `ingest_job_from_url` action, which creates a persistent `AgentTask`. The `job_ingestion` workflow template then runs through the framework-neutral `WorkflowExecutor`, which owns dependency order, output passing, failure blocking, and trace events while the existing `AgentTask` row remains the UI-facing progress record.
+
+`save=false` runs the same approved workflow without the `save_job` node. This keeps slow link analysis observable without forcing a tracker write. `save=true` includes the persistence node and stores the saved application record.
 
 The UI receives two observable runtime artifacts:
 

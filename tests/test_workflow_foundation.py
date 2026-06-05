@@ -340,6 +340,45 @@ def test_job_ingestion_runner_syncs_executor_trace_to_agent_task(tmp_path: Path,
     ]
 
 
+def test_job_ingestion_runner_can_complete_preview_without_saving(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.agents.coordinator.score_job_fit_with_llm", _fake_job_fit)
+    repository = JobRepository(tmp_path / "jobs.sqlite3")
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=repository,
+    )
+    task = repository.create_agent_task(
+        task_type=AgentTaskType.JOB_LINK_INGEST,
+        task_input={"url": "https://example.com/jobs/backend", "save": False},
+        task_id="task-1",
+    )
+    request = SimpleNamespace(
+        url="https://example.com/jobs/backend",
+        save=False,
+        use_browser_fallback=True,
+        use_llm=False,
+        use_llm_guidance=False,
+    )
+
+    JobIngestionWorkflowRunner(
+        coordinator=coordinator,
+        fetch_job_description=lambda _url, _browser: (_fake_fetched_page(), _fake_compacted_text()),
+        fetch_summary=lambda url, compacted, source: f"Fetched {compacted.compacted_length} from {url} using {source}.",
+    ).run(task.id, request)
+
+    persisted = repository.get_agent_task(task.id)
+
+    assert persisted is not None
+    assert persisted.status == AgentTaskStatus.COMPLETED
+    assert [step.name for step in persisted.steps] == ["fetch_job", "analyze_job"]
+    assert persisted.artifacts["analysis"]["fit"]["score"] == 82
+    assert "saved_job" not in persisted.artifacts
+    assert repository.list_jobs() == []
+    assert persisted.artifacts["workflow_graph"]["edges"] == [
+        {"source": "fetch_job", "target": "analyze_job"},
+    ]
+
+
 def test_job_ingestion_runner_marks_task_failed_on_fetch_failure(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("app.agents.coordinator.score_job_fit_with_llm", _fake_job_fit)
     repository = JobRepository(tmp_path / "jobs.sqlite3")
