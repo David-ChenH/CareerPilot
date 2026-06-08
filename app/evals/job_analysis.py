@@ -26,6 +26,8 @@ class JobAnalysisExpectations(BaseModel):
     recommendation: str | None = None
     required: list[TextExpectation] = Field(default_factory=list)
     forbidden: list[TextExpectation] = Field(default_factory=list)
+    no_duplicates: list[str] = Field(default_factory=list)
+    require_evidence: list[TextExpectation] = Field(default_factory=list)
 
 
 class JobAnalysisEvalCase(BaseModel):
@@ -208,16 +210,57 @@ def _evaluate_expectations(
             )
         )
 
+    for field in expectations.no_duplicates:
+        values = _field_values(response, field)
+        duplicates = _duplicates(values)
+        assertions.append(
+            _assertion(
+                name=f"no_duplicates:{field}",
+                passed=not duplicates,
+                expected="no duplicate normalized items",
+                actual=f"duplicates: {', '.join(duplicates)}" if duplicates else "none",
+            )
+        )
+
+    for evidence_expectation in expectations.require_evidence:
+        values = _field_values(response, evidence_expectation.field)
+        evidence_items = _evidence_values(response, evidence_expectation.field)
+        missing_evidence = []
+        terms = evidence_expectation.terms or values
+        for term in terms:
+            if term.lower() not in " ".join(values).lower():
+                continue
+            if not _has_evidence_for_term(term, evidence_items):
+                missing_evidence.append(term)
+        assertions.append(
+            _assertion(
+                name=f"require_evidence:{evidence_expectation.field}",
+                passed=not missing_evidence,
+                expected=f"evidence for: {', '.join(terms)}",
+                actual=f"missing evidence: {', '.join(missing_evidence)}" if missing_evidence else "evidence present",
+            )
+        )
+
     return assertions
 
 
 def _field_text(response: JobAnalysisResponse, field: str) -> str:
+    return " ".join(_field_values(response, field)).lower()
+
+
+def _field_values(response: JobAnalysisResponse, field: str) -> list[str]:
     field_map: dict[str, Any] = {
         "parsed.title": response.parsed_job.title,
         "parsed.company": response.parsed_job.company,
         "parsed.skills": response.parsed_job.skills,
+        "parsed.required_skills": response.parsed_job.required_skills,
+        "parsed.preferred_skills": response.parsed_job.preferred_skills,
+        "parsed.accepted_skill_alternatives": response.parsed_job.accepted_skill_alternatives,
+        "parsed.requirements": response.parsed_job.requirements,
+        "parsed.responsibilities": response.parsed_job.responsibilities,
         "fit.strong_matches": response.fit.strong_matches,
         "fit.gaps": response.fit.gaps,
+        "fit.growth_areas": response.fit.growth_areas,
         "fit.concerns": response.fit.concerns,
         "fit.summary": response.fit.summary,
         "fit.transition_notes": response.fit.transition_notes,
@@ -231,8 +274,49 @@ def _field_text(response: JobAnalysisResponse, field: str) -> str:
     if value is None:
         raise ValueError(f"Unsupported eval field: {field}")
     if isinstance(value, list):
-        return " ".join(str(item) for item in value).lower()
-    return str(value).lower()
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _evidence_values(response: JobAnalysisResponse, field: str) -> list[dict[str, Any]]:
+    evidence_map = {
+        "fit.strong_matches": response.fit.evidence.get("strong_matches", []),
+        "fit.gaps": response.fit.evidence.get("gaps", []),
+        "fit.concerns": response.fit.evidence.get("concerns", []),
+        "fit.summary": response.fit.evidence.get("recommendation", []),
+        "guidance.apply_reasoning": response.guidance.evidence.apply_reasoning,
+        "guidance.prep_plan": response.guidance.evidence.prep_plan,
+        "guidance.resume_guidance": response.guidance.evidence.resume_guidance,
+        "guidance.learning_plan": response.guidance.evidence.learning_plan,
+        "guidance.interview_focus": response.guidance.evidence.interview_focus,
+    }
+    items = evidence_map.get(field, [])
+    return [item.model_dump() if hasattr(item, "model_dump") else dict(item) for item in items]
+
+
+def _has_evidence_for_term(term: str, evidence_items: list[dict[str, Any]]) -> bool:
+    normalized_term = term.lower()
+    for item in evidence_items:
+        claim = str(item.get("claim") or "").lower()
+        evidence = str(item.get("evidence_from_job") or "").lower()
+        if normalized_term in claim and evidence.strip():
+            return True
+        if normalized_term in evidence and evidence.strip():
+            return True
+    return False
+
+
+def _duplicates(values: list[str]) -> list[str]:
+    seen = set()
+    duplicates = []
+    for value in values:
+        normalized = " ".join(value.lower().split())
+        if not normalized:
+            continue
+        if normalized in seen and normalized not in duplicates:
+            duplicates.append(normalized)
+        seen.add(normalized)
+    return duplicates
 
 
 def _assertion(name: str, passed: bool, expected: str, actual: str) -> EvalAssertionResult:

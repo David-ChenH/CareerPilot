@@ -21,8 +21,13 @@ The current fixtures cover:
 - a strong backend/AI-platform role that should be recommended
 - a research-scientist role that should be low fit for this profile
 - a frontend/prompt-tooling role that should be low fit
+- a backend/platform role that should not hallucinate RAG gaps
+- a language-alternative role where C#, C++, or JavaScript should not become hard blockers when Java is accepted
+- a backend AI-platform role where preferred ML depth should be treated as a growth area, not a blocker
 
 This gives us a regression harness for the failure modes we care about most: over-recommending weak roles, missing important gaps, and producing repeated or unsupported concerns.
+
+The eval assertions are deterministic quality checks over generated output. They are not a replacement for semantic scoring. The model can still reason flexibly, but the product can reject known-bad output patterns such as unsupported gaps, duplicate concerns, or missing evidence.
 
 ## Commands
 
@@ -76,6 +81,12 @@ Add a case to `evals/job_analysis/cases.yaml`:
     forbidden:
       - field: "fit.concerns"
         terms: ["research-oriented"]
+    no_duplicates:
+      - "fit.concerns"
+      - "fit.gaps"
+    require_evidence:
+      - field: "fit.gaps"
+        terms: ["Kubernetes"]
 ```
 
 Supported assertion fields include:
@@ -83,8 +94,14 @@ Supported assertion fields include:
 - `parsed.title`
 - `parsed.company`
 - `parsed.skills`
+- `parsed.required_skills`
+- `parsed.preferred_skills`
+- `parsed.accepted_skill_alternatives`
+- `parsed.requirements`
+- `parsed.responsibilities`
 - `fit.strong_matches`
 - `fit.gaps`
+- `fit.growth_areas`
 - `fit.concerns`
 - `fit.summary`
 - `fit.transition_notes`
@@ -93,6 +110,15 @@ Supported assertion fields include:
 - `guidance.resume_guidance`
 - `guidance.learning_plan`
 - `guidance.interview_focus`
+
+Expectation types:
+
+- `required`: terms that must appear in a field.
+- `forbidden`: terms that must not appear in a field.
+- `no_duplicates`: list fields that should not contain repeated normalized items.
+- `require_evidence`: terms that require matching evidence in the corresponding evidence group.
+
+Use `forbidden` for known hallucination regressions. Use `require_evidence` for major claims that should be grounded in the job description, such as hard skill gaps or concerns.
 
 ## Production Lessons
 
@@ -103,5 +129,6 @@ This structure mirrors production agent-system practice:
 - Run deterministic unit tests with explicit fake semantic evaluators for stable application-layer coverage.
 - Run LLM evals before prompt/schema changes and compare JSON reports.
 - Treat eval failures as design feedback, not just test failures.
+- Convert real product mistakes into sanitized eval cases so fixes become durable.
 
 Future improvements should add richer graded evals, model-output snapshots, cost/latency tracking, and CI modes that separate stable application-layer gates from LLM quality checks.

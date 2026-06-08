@@ -51,6 +51,85 @@ cases:
         - field: "fit.summary"
           terms: ["Strong fit"]
 
+  - id: backend-no-rag-hallucination
+    name: "Backend platform role without RAG requirements"
+    description: "Should not invent retrieval-augmented generation as a skill gap when the posting does not mention retrieval, vector search, embeddings, or RAG."
+    source_url: "https://example.com/jobs/backend-platform-no-rag"
+    job_description: |
+      Senior Backend Engineer, Platform Workflows
+      Company: Example Cloud Platform
+      Location: Remote
+
+      Build Python and Java backend services for distributed workflow orchestration.
+      Design APIs, improve service reliability, support operational dashboards, and
+      integrate with cloud infrastructure services. Experience with Kubernetes is helpful.
+    expectations:
+      min_score: 65
+      required:
+        - field: "fit.strong_matches"
+          terms: ["backend"]
+      forbidden:
+        - field: "fit.gaps"
+          terms: ["RAG", "retrieval augmented generation", "vector database", "embeddings"]
+        - field: "guidance.learning_plan"
+          terms: ["RAG", "retrieval augmented generation"]
+      no_duplicates:
+        - "fit.concerns"
+
+  - id: language-alternatives-not-hard-gap
+    name: "Alternative programming languages should not become hard blockers"
+    description: "If a job accepts Java as one of several languages, analysis should not claim C# or C++ are required gaps for a Java-capable backend profile."
+    source_url: "https://example.com/jobs/language-alternatives"
+    job_description: |
+      Software Engineer, Distributed Systems
+      Company: Example Productivity
+      Location: Redmond
+
+      Responsibilities include building scalable backend services, distributed systems,
+      and API integrations. Required qualifications include professional experience
+      with one or more programming languages such as Java, C#, C++, Python, or JavaScript.
+      Preferred qualifications include experience with cloud platforms and service reliability.
+    expectations:
+      min_score: 65
+      required:
+        - field: "parsed.accepted_skill_alternatives"
+          terms: ["Java"]
+      forbidden:
+        - field: "fit.gaps"
+          terms: ["C#", "C++", "JavaScript"]
+        - field: "fit.concerns"
+          terms: ["requires proficiency in C#"]
+      no_duplicates:
+        - "fit.concerns"
+      require_evidence:
+        - field: "fit.gaps"
+
+  - id: preferred-ml-depth-not-blocker
+    name: "Preferred ML depth should be treated as growth area, not blocker"
+    description: "Preferred ML evaluation/training exposure can be a learning area, but should not be framed as a hard blocker for a backend/platform role."
+    source_url: "https://example.com/jobs/backend-ml-preferred"
+    job_description: |
+      Backend Engineer, AI Developer Platform
+      Company: Example AI Tools
+      Location: New York
+
+      Build backend APIs, orchestration services, and developer workflows for an AI
+      platform team. Required qualifications include Python or Java backend experience,
+      distributed systems fundamentals, and cloud service ownership.
+
+      Preferred qualifications include familiarity with ML evaluation, model training
+      workflows, and experimentation platforms.
+    expectations:
+      min_score: 65
+      forbidden:
+        - field: "fit.gaps"
+          terms: ["Deep understanding of ML evaluation and training mechanisms", "ML evaluation and training mechanisms"]
+        - field: "fit.concerns"
+          terms: ["blocker", "hard requirement"]
+      no_duplicates:
+        - "fit.concerns"
+        - "fit.gaps"
+
   - id: frontend-prompt-tooling-low-fit
     name: "Frontend prompt-tooling role"
     description: "Should be penalized because it is frontend and prompt-tooling heavy without enough backend/platform ownership."
