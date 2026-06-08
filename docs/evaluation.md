@@ -29,6 +29,8 @@ This gives us a regression harness for the failure modes we care about most: ove
 
 The eval assertions are deterministic quality checks over generated output. They are not a replacement for semantic scoring. The model can still reason flexibly, but the product can reject known-bad output patterns such as unsupported gaps, duplicate concerns, or missing evidence.
 
+For semantic categories, prefer canonical labels over exact prose. For example, an LLM might describe the same concern as "frontend-heavy," "mostly UI work," or "limited backend ownership." The user-facing sentence can vary, but the structured output should use stable labels such as `frontend_heavy`, `research_mismatch`, or `prompt_tooling_heavy`. This makes tests, UI grouping, and historical analysis more reliable without forcing the model to write awkward fixed phrases.
+
 ## Commands
 
 Run the LLM parser, scorer, and guidance generator:
@@ -76,11 +78,11 @@ Add a case to `evals/job_analysis/cases.yaml`:
     priority: "high"
     recommendation: "apply"
     required:
-      - field: "fit.gaps"
-        terms: ["Kubernetes"]
+      - field: "fit.gap_codes"
+        terms: ["kubernetes"]
     forbidden:
-      - field: "fit.concerns"
-        terms: ["research-oriented"]
+      - field: "fit.concern_codes"
+        terms: ["research_mismatch"]
     no_duplicates:
       - "fit.concerns"
       - "fit.gaps"
@@ -103,6 +105,10 @@ Supported assertion fields include:
 - `fit.gaps`
 - `fit.growth_areas`
 - `fit.concerns`
+- `fit.concern_codes`
+- `fit.gap_codes`
+- `fit.growth_area_codes`
+- `fit.uncategorized_observations`
 - `fit.summary`
 - `fit.transition_notes`
 - `guidance.apply_reasoning`
@@ -119,6 +125,8 @@ Expectation types:
 - `require_evidence`: terms that require matching evidence in the corresponding evidence group.
 
 Use `forbidden` for known hallucination regressions. Use `require_evidence` for major claims that should be grounded in the job description, such as hard skill gaps or concerns.
+
+Use canonical code fields for category-level behavior. Use natural-language fields when the exact user-facing claim matters, such as forbidding a specific hallucinated technology in `fit.gaps`.
 
 ## Production Lessons
 

@@ -4,6 +4,7 @@ import pytest
 
 from app.agents.coordinator import JobAnalysisResponse
 from app.evals.job_analysis import JobAnalysisExpectations, TextExpectation, _evaluate_expectations, load_eval_cases, run_job_analysis_evals
+from app.tools.job_fit_taxonomy import ConcernCode, GapCode
 from app.tools.job_parser import ParsedJob
 from app.tools.llm_job_guidance import JobApplicationGuidance
 from app.tools.scoring import EvidenceItem, JobFit
@@ -105,6 +106,49 @@ def test_eval_expectations_accept_matching_evidence_for_claimed_gap() -> None:
     )
 
     assert assertions[0].passed is True
+
+
+def test_eval_expectations_support_canonical_concern_codes() -> None:
+    response = _analysis_response(
+        fit=JobFit(
+            score=45,
+            priority="low",
+            strong_matches=[],
+            gaps=[],
+            concerns=["Role appears frontend-heavy."],
+            concern_codes=[ConcernCode.FRONTEND_HEAVY],
+            summary="Low fit.",
+        )
+    )
+
+    assertions = _evaluate_expectations(
+        response,
+        JobAnalysisExpectations(required=[TextExpectation(field="fit.concern_codes", terms=["frontend_heavy"])]),
+    )
+
+    assert assertions[0].passed is True
+
+
+def test_eval_expectations_can_forbid_canonical_gap_codes() -> None:
+    response = _analysis_response(
+        fit=JobFit(
+            score=70,
+            priority="medium",
+            strong_matches=[],
+            gaps=["Kubernetes"],
+            gap_codes=[GapCode.KUBERNETES],
+            concerns=[],
+            summary="Medium fit.",
+        )
+    )
+
+    assertions = _evaluate_expectations(
+        response,
+        JobAnalysisExpectations(forbidden=[TextExpectation(field="fit.gap_codes", terms=["kubernetes"])]),
+    )
+
+    assert assertions[0].passed is False
+    assert assertions[0].actual == "present: kubernetes"
 
 
 def _analysis_response(fit: JobFit) -> JobAnalysisResponse:

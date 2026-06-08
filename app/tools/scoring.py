@@ -1,5 +1,8 @@
 from pydantic import BaseModel, Field
 
+from app.tools.job_fit_taxonomy import ConcernCode, GapCode, GrowthAreaCode
+
+
 class JobFit(BaseModel):
     score: int
     priority: str
@@ -7,6 +10,10 @@ class JobFit(BaseModel):
     gaps: list[str] = Field(default_factory=list)
     growth_areas: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
+    concern_codes: list[ConcernCode] = Field(default_factory=list)
+    gap_codes: list[GapCode] = Field(default_factory=list)
+    growth_area_codes: list[GrowthAreaCode] = Field(default_factory=list)
+    uncategorized_observations: list[str] = Field(default_factory=list)
     summary: str
     score_components: dict[str, int] = Field(default_factory=dict)
     recommendation: str | None = None

@@ -33,6 +33,27 @@ export type EvidenceItem = {
   source?: string | null;
 };
 
+export type ConcernCode =
+  | "research_mismatch"
+  | "frontend_heavy"
+  | "prompt_tooling_heavy"
+  | "low_backend_ownership"
+  | "seniority_mismatch"
+  | "weak_platform_scope";
+
+export type GapCode =
+  | "kubernetes"
+  | "stream_processing"
+  | "distributed_systems_depth"
+  | "production_ai_experience"
+  | "cloud_infra_depth";
+
+export type GrowthAreaCode =
+  | "ml_evaluation_growth"
+  | "kubernetes_growth"
+  | "stream_processing_growth"
+  | "ai_platform_depth";
+
 export type JobFit = {
   score: number;
   priority: string;
@@ -40,6 +61,10 @@ export type JobFit = {
   gaps: string[];
   growth_areas: string[];
   concerns: string[];
+  concern_codes: ConcernCode[];
+  gap_codes: GapCode[];
+  growth_area_codes: GrowthAreaCode[];
+  uncategorized_observations: string[];
   summary: string;
   recommendation?: string | null;
   transition_notes: string[];

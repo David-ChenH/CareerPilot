@@ -4,9 +4,7 @@ This project is meant to be both a useful local job-search agent and a learning 
 
 The important idea: do not start with a fully autonomous agent. Start with a reliable workflow, then add agentic behavior only where fixed code is too rigid.
 
-For the full project plan, see [Project Roadmap](project_roadmap.md).
-
-For the planned follow-up chat and web-search feature, see [Analysis Chat Plan](analysis_chat_plan.md).
+For the full project plan, see [Roadmap](roadmap.md).
 
 This project is intentionally backend/agent focused. Frontend work should make the system demoable and pleasant to use, but the main learning value is in orchestration, memory, tool use, evaluation, persistence, and production-style architecture.
 
@@ -213,9 +211,7 @@ Fetches a single job URL and extracts readable text from HTML.
 
 This is intentionally conservative. It works for simple pages, then falls back to Playwright browser rendering when a job board uses JavaScript. Some login-required or blocked pages still require manual paste.
 
-For the detailed design tradeoff, see [Job Fetching Tradeoffs](job_fetching_tradeoffs.md).
-
-For the planned target-company watchlist and ingestion pipeline, see [Target Company Ingestion Plan](target_company_ingestion_plan.md).
+For the detailed design tradeoff and target-company ingestion path, see [Job Ingestion](ingestion.md).
 
 `app/tools/scoring.py`
 
@@ -573,17 +569,13 @@ DynamoDB can still be discussed as a production alternative for serverless workl
 
 Recommended sequence:
 
-1. Add a sample job description file and CLI command.
-2. Improve the parser with an LLM-backed structured extraction step.
-3. Add profile update proposals with confirmation.
-4. Add resume tailoring from an uploaded resume.
-5. Add browser automation for job pages that require JavaScript.
-6. Add web search ingestion.
-7. Add evaluation cases for job ranking quality.
-8. Add tracing and structured logs.
-9. Add Docker.
-10. Add Postgres/pgvector option.
-11. Add LangGraph or OpenAI Agents SDK for research/prep workflows.
+1. Add more job-analysis eval cases from real failures.
+2. Move prep-plan generation onto a richer workflow DAG with parallel branches.
+3. Add workflow cache keys, model routing, cost tracking, retries, and approval pauses.
+4. Improve chat as a generic action surface across jobs, profile, prep plans, and resumes.
+5. Add Docker once the workflow runtime shape is stable.
+6. Compare one stable workflow with a LangGraph adapter.
+7. Add target-company discovery after manual ingestion and analysis quality are stronger.
 
 ## Suggested reading
 

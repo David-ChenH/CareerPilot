@@ -265,10 +265,13 @@ frontend/
     api.ts                        Typed API client
     types.ts                      Frontend data contracts
 docs/
+  README.md                       Documentation index
   architecture.md                 System design overview
   learning_guide.md               Learning notes and design patterns
-  workflow_runtime_plan.md        Agent workflow runtime roadmap
-  self_evolving_extraction.md     Selector learning design
+  roadmap.md                      Project status and next priorities
+  ingestion.md                    Job URL fetching and extraction strategy
+  workflow_runtime.md             Agent workflow runtime roadmap
+  evaluation.md                   Job-analysis quality eval strategy
 tests/
   test_job_analysis.py
   test_job_analysis_evals.py
@@ -331,12 +334,10 @@ A concise interview explanation:
 
 - [Architecture](docs/architecture.md)
 - [Learning Guide](docs/learning_guide.md)
-- [Project Roadmap](docs/project_roadmap.md)
-- [Workflow Runtime Plan](docs/workflow_runtime_plan.md)
-- [Self-Evolving Extraction](docs/self_evolving_extraction.md)
+- [Roadmap](docs/roadmap.md)
+- [Workflow Runtime](docs/workflow_runtime.md)
+- [Ingestion](docs/ingestion.md)
 - [Evaluation Strategy](docs/evaluation.md)
-- [Job Fetching Tradeoffs](docs/job_fetching_tradeoffs.md)
-- [Target Company Ingestion Plan](docs/target_company_ingestion_plan.md)
 
 ## Roadmap
 

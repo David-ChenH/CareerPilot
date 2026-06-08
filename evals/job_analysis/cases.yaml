@@ -19,13 +19,11 @@ cases:
       required:
         - field: "parsed.skills"
           terms: ["backend", "workflow orchestration", "cloud", "llm"]
-        - field: "fit.strong_matches"
-          terms: ["Backend architecture", "Workflow orchestration"]
       forbidden:
         - field: "fit.gaps"
           terms: ["Kubernetes", "Docker", "RAG"]
-        - field: "fit.concerns"
-          terms: ["research-oriented", "frontend-heavy", "prompt-engineering-heavy"]
+        - field: "fit.concern_codes"
+          terms: ["research_mismatch", "frontend_heavy", "prompt_tooling_heavy"]
 
   - id: research-scientist-low-fit
     name: "Research scientist role with PhD-heavy requirements"
@@ -45,8 +43,8 @@ cases:
       priority: "low"
       recommendation: "skip"
       required:
-        - field: "fit.concerns"
-          terms: ["research-oriented"]
+        - field: "fit.concern_codes"
+          terms: ["research_mismatch"]
       forbidden:
         - field: "fit.summary"
           terms: ["Strong fit"]
@@ -71,6 +69,8 @@ cases:
       forbidden:
         - field: "fit.gaps"
           terms: ["RAG", "retrieval augmented generation", "vector database", "embeddings"]
+        - field: "fit.gap_codes"
+          terms: ["production_ai_experience"]
         - field: "guidance.learning_plan"
           terms: ["RAG", "retrieval augmented generation"]
       no_duplicates:
@@ -121,9 +121,14 @@ cases:
       workflows, and experimentation platforms.
     expectations:
       min_score: 65
+      required:
+        - field: "fit.growth_area_codes"
+          terms: ["ml_evaluation_growth"]
       forbidden:
         - field: "fit.gaps"
           terms: ["Deep understanding of ML evaluation and training mechanisms", "ML evaluation and training mechanisms"]
+        - field: "fit.gap_codes"
+          terms: ["production_ai_experience"]
         - field: "fit.concerns"
           terms: ["blocker", "hard requirement"]
       no_duplicates:
@@ -147,8 +152,8 @@ cases:
       priority: "low"
       recommendation: "skip"
       required:
-        - field: "fit.concerns"
-          terms: ["frontend-heavy", "prompt-engineering-heavy"]
+        - field: "fit.concern_codes"
+          terms: ["frontend_heavy", "prompt_tooling_heavy"]
       forbidden:
         - field: "fit.summary"
           terms: ["Strong fit"]

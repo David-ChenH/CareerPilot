@@ -18,8 +18,7 @@ flowchart LR
   budget --> chunkedParser[Chunked LLM Extraction]
   coordinator --> parser[Deterministic Parser]
   coordinator --> llmParser[Optional LLM Parser]
-  coordinator --> scorer[Deterministic Baseline Scorer]
-  coordinator --> llmScorer[Optional LLM Semantic Scorer]
+  coordinator --> llmScorer[Required LLM Semantic Scorer]
   coordinator --> guidance[Optional LLM Guidance]
   coordinator --> chat[Job / Global Chat Tools]
   coordinator --> resume[Resume Generator]
@@ -28,7 +27,6 @@ flowchart LR
   parser --> analysis[Analysis Preview]
   chunkedParser --> analysis
   llmParser --> analysis
-  scorer --> analysis
   llmScorer --> analysis
   guidance --> analysis
 
@@ -143,11 +141,10 @@ Each `AgentTask` persists:
 
 ## Future components
 
-- LLM tool-calling layer for richer extraction and resume tailoring.
 - Vector store for semantic profile and job retrieval.
-- Web search ingestion pipeline.
-- Browser automation for company career pages.
-- Evaluation harness for scoring quality.
+- Target-company discovery pipeline.
+- Model routing, cache, cost, retry, and approval policies in the workflow runtime.
+- LangGraph adapter comparison after workflow contracts stabilize.
 - Docker and Kubernetes manifests.
 
 ## Safety boundaries
@@ -191,11 +188,10 @@ The SQLite adapter currently owns these tables as one local persistence boundary
 
 ## Design notes
 
-- [Job Fetching Tradeoffs](job_fetching_tradeoffs.md): why the MVP starts with plain HTTP fetch, where it fails, and when browser automation or APIs are better.
-- [Analysis Chat Plan](analysis_chat_plan.md): roadmap for job-scoped follow-up chat, local chat history, and optional OpenAI web search.
-- [Target Company Ingestion Plan](target_company_ingestion_plan.md): roadmap for curated company watchlists, reusable source connectors, deduplication, and scheduled scans.
-- [Self-Evolving Extraction](self_evolving_extraction.md): safe selector learning for careers pages and the path toward version-aware LLM caching.
-- [Agent Workflow Runtime Plan](workflow_runtime_plan.md): staged design for DAG execution, cache reuse, routing, budgets, retries, evaluation, approvals, traces, and a later LangGraph comparison.
+- [Roadmap](roadmap.md): project status, next priorities, deferred work, and decision log.
+- [Job Ingestion](ingestion.md): URL fetching, JSON-LD, Playwright, selector learning, and target-company discovery.
+- [Workflow Runtime](workflow_runtime.md): DAG execution, cache reuse, routing, budgets, retries, approvals, traces, and a later LangGraph comparison.
+- [Evaluation Strategy](evaluation.md): job-analysis eval cases and quality gates.
 
 ## Scoring model
 

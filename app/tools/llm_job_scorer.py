@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.config.env import load_local_env
+from app.tools.job_fit_taxonomy import ConcernCode, GapCode, GrowthAreaCode, taxonomy_prompt
 from app.tools.job_parser import ParsedJob
 from app.tools.scoring import EvidenceItem, JobFit
 
@@ -40,6 +41,10 @@ class LLMSemanticJobFit(BaseModel):
         description="Skills or technologies that are important for the role and weak/missing in the profile.",
     )
     concerns: list[str] = Field(default_factory=list)
+    concern_codes: list[ConcernCode] = Field(default_factory=list)
+    gap_codes: list[GapCode] = Field(default_factory=list)
+    growth_area_codes: list[GrowthAreaCode] = Field(default_factory=list)
+    uncategorized_observations: list[str] = Field(default_factory=list)
     transition_notes: list[str] = Field(default_factory=list)
     recommendation: str = Field(description="One of: apply, consider, skip.")
     summary: str
@@ -98,6 +103,7 @@ def score_job_fit_with_llm(
                         "Treat parsed_job.ambiguous_qualifications as facts to validate, not as hard requirements or blockers. "
                         "Do not guess whether a flattened qualification statement was required or preferred. "
                         "Do not repeat the same concept with slightly different wording across gaps, growth_areas, or concerns. "
+                        f"{taxonomy_prompt()} "
                         "For each important match, gap, concern, and recommendation, include evidence. Evidence must quote "
                         "or closely paraphrase parsed_job and include a profile signal when the claim compares against the user."
                     ),
@@ -138,6 +144,10 @@ def score_job_fit_with_llm(
     )
     grounded_growth_areas = _filter_grounded_items(llm_fit.growth_areas, job, profile=profile)
     hard_gaps, downgraded_growth_areas = _partition_hard_gaps(grounded_gaps, job)
+    final_growth_areas = _merge_unique(
+        _merge_unique(grounded_growth_areas, downgraded_growth_areas),
+        _implicit_growth_areas(job=job, hard_gaps=hard_gaps),
+    )
     evidence = {
         "strong_matches": _ground_evidence(llm_fit.match_evidence, job, profile, allowed_claims=None),
         "gaps": _ground_evidence(llm_fit.gap_evidence, job, profile, allowed_claims=hard_gaps),
@@ -150,8 +160,12 @@ def score_job_fit_with_llm(
         priority=priority,
         strong_matches=llm_fit.strong_matches,
         gaps=hard_gaps,
-        growth_areas=_merge_unique(grounded_growth_areas, downgraded_growth_areas),
+        growth_areas=final_growth_areas,
         concerns=llm_fit.concerns,
+        concern_codes=_infer_concern_codes(llm_fit.concern_codes, llm_fit.concerns, job),
+        gap_codes=_filter_gap_codes(llm_fit.gap_codes, hard_gaps, job),
+        growth_area_codes=_infer_growth_area_codes(llm_fit.growth_area_codes, final_growth_areas, job),
+        uncategorized_observations=llm_fit.uncategorized_observations,
         summary=_reconcile_summary(llm_fit.summary, hard_gaps, downgraded_growth_areas),
         score_components={
             "role_alignment": _clamp_component(llm_fit.role_alignment_score),
@@ -164,6 +178,110 @@ def score_job_fit_with_llm(
         transition_notes=llm_fit.transition_notes,
         evidence=evidence,
     )
+
+
+def _infer_concern_codes(codes: list[ConcernCode], concerns: list[str], job: ParsedJob) -> list[ConcernCode]:
+    inferred = list(dict.fromkeys(codes))
+    concern_text = " ".join(concerns).lower()
+    job_text = _job_evidence_text(job)
+    code_signals = {
+        ConcernCode.RESEARCH_MISMATCH: ["research", "publication", "phd", "model architecture", "training research"],
+        ConcernCode.FRONTEND_HEAVY: ["frontend", "front-end", "react", "ui development", "user interface"],
+        ConcernCode.PROMPT_TOOLING_HEAVY: [
+            "prompt",
+            "prompt template",
+            "prompt tooling",
+            "prompt-tooling",
+            "prompt engineering",
+            "prompt-engineering",
+            "prompt library",
+            "labeling",
+            "data labeling",
+        ],
+        ConcernCode.LOW_BACKEND_OWNERSHIP: ["backend infrastructure ownership is limited", "backend ownership is limited"],
+        ConcernCode.WEAK_PLATFORM_SCOPE: ["application-only", "business application"],
+    }
+    for code, signals in code_signals.items():
+        if code not in inferred and any(signal in concern_text for signal in signals):
+            inferred.append(code)
+    if (
+        ConcernCode.PROMPT_TOOLING_HEAVY not in inferred
+        and "prompt" in job_text
+        and any(signal in job_text for signal in ["prompt template", "prompt library", "labeling", "prompt engineer"])
+        and any(signal in job_text for signal in ["frontend", "limited backend", "backend infrastructure ownership is limited"])
+    ):
+        inferred.append(ConcernCode.PROMPT_TOOLING_HEAVY)
+    return inferred
+
+
+def _filter_gap_codes(codes: list[GapCode], gaps: list[str], job: ParsedJob) -> list[GapCode]:
+    if not gaps:
+        return []
+    evidence = _job_evidence_text(job)
+    gap_text = " ".join(gaps).lower()
+    return [
+        code
+        for code in dict.fromkeys(codes)
+        if _code_has_support(code.value, gap_text, evidence)
+    ]
+
+
+def _infer_growth_area_codes(codes: list[GrowthAreaCode], growth_areas: list[str], job: ParsedJob) -> list[GrowthAreaCode]:
+    evidence = _job_evidence_text(job)
+    growth_text = " ".join(growth_areas).lower()
+    inferred = [
+        code
+        for code in dict.fromkeys(codes)
+        if _code_has_support(code.value, growth_text, evidence)
+    ]
+    if GrowthAreaCode.ML_EVALUATION_GROWTH not in inferred and _has_optional_ml_growth_signal(job):
+        inferred.append(GrowthAreaCode.ML_EVALUATION_GROWTH)
+    return inferred
+
+
+def _code_has_support(code: str, claim_text: str, evidence: str) -> bool:
+    code_aliases = {
+        "kubernetes": ["kubernetes", "k8s"],
+        "kubernetes_growth": ["kubernetes", "k8s"],
+        "stream_processing": ["stream", "streaming", "flink", "kafka"],
+        "stream_processing_growth": ["stream", "streaming", "flink", "kafka"],
+        "ml_evaluation_growth": ["ml evaluation", "model training", "experimentation", "training workflows"],
+        "distributed_systems_depth": ["distributed systems"],
+        "production_ai_experience": ["ai platform", "llm", "agent"],
+        "ai_platform_depth": ["ai platform", "llm", "agent"],
+        "cloud_infra_depth": ["cloud", "infrastructure"],
+    }
+    aliases = code_aliases.get(code, [code.replace("_", " ")])
+    return any(alias in claim_text or alias in evidence for alias in aliases)
+
+
+def _implicit_growth_areas(job: ParsedJob, hard_gaps: list[str]) -> list[str]:
+    growth_areas = []
+    hard_gap_text = " ".join(hard_gaps).lower()
+    if _has_optional_ml_growth_signal(job) and "ml evaluation" not in hard_gap_text and "model training" not in hard_gap_text:
+        growth_areas.append("ML evaluation and model-training workflow familiarity")
+    if _optional_signal_for_item("kubernetes", job) and "kubernetes" not in hard_gap_text:
+        growth_areas.append("Kubernetes/container orchestration exposure")
+    return growth_areas
+
+
+def _has_optional_ml_growth_signal(job: ParsedJob) -> bool:
+    optional_text = _optional_job_evidence_text(job)
+    aliases = ["ml evaluation", "model evaluation", "model training", "training workflows", "experimentation"]
+    return any(alias in optional_text for alias in aliases)
+
+
+def _optional_job_evidence_text(job: ParsedJob) -> str:
+    explicit_optional_text = " ".join([*job.preferred_skills, *job.preferred_qualifications]).lower()
+    if explicit_optional_text:
+        return explicit_optional_text
+
+    description = job.description.lower()
+    optional_windows = []
+    for marker in ["preferred", "nice to have", "familiarity", "useful", "helpful"]:
+        for match in re.finditer(re.escape(marker), description):
+            optional_windows.append(description[match.start() : match.start() + 500])
+    return " ".join(optional_windows)
 
 
 def _merge_unique(first: list[str], second: list[str]) -> list[str]:
@@ -250,6 +368,8 @@ def _is_hard_requirement(item: str, job: ParsedJob) -> bool:
     ambiguous_text = " ".join(job.ambiguous_qualifications).lower()
     if _has_job_evidence(lowered, ambiguous_text):
         return False
+    if _optional_signal_for_item(lowered, job):
+        return False
     if _has_job_evidence(lowered, hard_skills_text):
         return True
     if _has_job_evidence(lowered, preferred_text):
@@ -257,6 +377,11 @@ def _is_hard_requirement(item: str, job: ParsedJob) -> bool:
     if _has_job_evidence(lowered, requirements_text) and _contains_explicit_requirement_marker(lowered, requirements_text):
         return True
     return False
+
+
+def _optional_signal_for_item(item: str, job: ParsedJob) -> bool:
+    optional_text = _optional_job_evidence_text(job)
+    return _has_job_evidence(item, optional_text)
 
 
 def _contains_explicit_requirement_marker(item: str, text: str) -> bool:
@@ -456,6 +581,12 @@ def _clamp_component(value: int) -> int:
 
 def _normalize_priority(priority: str, score: int) -> str:
     lowered = priority.lower().strip()
+    if score < 50:
+        return "low"
+    if score >= 85:
+        return "high"
+    if score < 75 and lowered == "high":
+        return "medium"
     if lowered in {"high", "medium", "low"}:
         return lowered
     if score >= 80:
