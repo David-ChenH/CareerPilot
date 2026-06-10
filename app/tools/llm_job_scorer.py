@@ -18,6 +18,13 @@ class LLMFitEvidence(BaseModel):
     claim: str = Field(description="The exact match, gap, concern, or recommendation claim.")
     evidence_from_job: str = Field(description="Short quote or close paraphrase from parsed_job that supports the claim.")
     profile_signal: str | None = Field(default=None, description="Profile fact that explains why this is a match, gap, or concern.")
+    profile_source_path: str | None = Field(
+        default=None,
+        description=(
+            "YAML-like profile path for a positive profile fact, such as "
+            "technical_strengths[0] or experience_highlights[3]. Leave null for absence claims."
+        ),
+    )
     severity: str | None = Field(default=None, description="One of: critical, useful, nice-to-have, blocker, positive.")
     confidence: str = Field(description="One of: high, medium, low.")
 
@@ -95,8 +102,8 @@ def score_job_fit_with_llm(
                         "Every gap and concern must be grounded in a skill, requirement, responsibility, or role signal "
                         "that appears in parsed_job. Do not add generic prep topics such as Docker, Kubernetes, or RAG "
                         "unless they are present in parsed_job. If a role lists Java as an accepted qualification, do not "
-                        "describe the role as mainly C++/C# unless the job text clearly emphasizes only C++/C#. "
-                        "A list such as C, C++, C#, Java, or Python is an alternatives list: satisfying one accepted "
+                        "describe the role as mainly C++, C#, or Scala unless the job text clearly emphasizes only those languages. "
+                        "A list such as Java, Scala, or C++ is an alternatives list: satisfying one accepted "
                         "language is enough unless the posting explicitly requires a particular language elsewhere. "
                         "Put preferred, optional, or useful-to-validate capabilities in growth_areas, not gaps. Reserve "
                         "gaps for missing hard requirements or capabilities clearly central to the core responsibilities. "
@@ -105,7 +112,11 @@ def score_job_fit_with_llm(
                         "Do not repeat the same concept with slightly different wording across gaps, growth_areas, or concerns. "
                         f"{taxonomy_prompt()} "
                         "For each important match, gap, concern, and recommendation, include evidence. Evidence must quote "
-                        "or closely paraphrase parsed_job and include a profile signal when the claim compares against the user."
+                        "or closely paraphrase parsed_job and include a profile signal when the claim compares against the user. "
+                        "When profile_signal cites a positive profile fact, include a profile_source_path using the supplied "
+                        "profile keys and array indexes when possible, for example technical_strengths[1] or "
+                        "experience_highlights[4]. For absence claims like 'C++ is not listed in the profile', leave "
+                        "profile_source_path null."
                     ),
                 },
                 {
@@ -338,11 +349,25 @@ def _language_alternative_groups(job: ParsedJob) -> list[set[str]]:
         [job.description, *job.requirements, *job.required_skills, *job.accepted_skill_alternatives]
     ).lower()
     groups = []
-    for match in re.finditer(r"(?:including[^.]{0,80}|(?:coding|programming)[^.]{0,80})(c\+\+|c#|java|python)[^.]{0,120}", text):
-        languages = _language_terms(match.group(0))
-        if len(languages) >= 2 and (" or " in match.group(0) or "including" in match.group(0)):
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        languages = _language_terms(sentence)
+        if len(languages) >= 2 and _looks_like_alternative_language_requirement(sentence):
             groups.append(languages)
     return groups
+
+
+def _looks_like_alternative_language_requirement(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in [
+            " or ",
+            "either",
+            "one or more",
+            "including",
+            "such as",
+        ]
+    )
 
 
 def _language_terms(text: str) -> set[str]:
@@ -355,6 +380,7 @@ def _language_terms(text: str) -> set[str]:
             "c#": r"c#|c sharp|csharp",
             "java": r"(?<![a-z0-9])java(?![a-z0-9])",
             "python": r"(?<![a-z0-9])python(?![a-z0-9])",
+            "scala": r"(?<![a-z0-9])scala(?![a-z0-9])",
         }.items()
         if re.search(pattern, lowered)
     }
@@ -420,7 +446,7 @@ def _ground_evidence(
     allowed_claims: list[str] | None,
 ) -> list[EvidenceItem]:
     evidence_text = _job_evidence_text(job)
-    profile_text = json.dumps(profile, ensure_ascii=True).lower()
+    profile_facts = _flatten_profile_facts(profile)
     grounded = []
     for item in items:
         clean_claim = item.claim.strip()
@@ -430,8 +456,20 @@ def _ground_evidence(
             continue
         if not _evidence_statement_is_supported(clean_claim, item.evidence_from_job, evidence_text):
             continue
-        if item.profile_signal and not _profile_signal_is_supported(item.profile_signal, profile_text):
-            confidence = "low"
+        confidence = item.confidence
+        profile_source_path = item.profile_source_path.strip() if item.profile_source_path else None
+        profile_evidence = None
+        if item.profile_signal:
+            supported, inferred_path, inferred_evidence = _profile_signal_support(
+                profile_signal=item.profile_signal,
+                requested_path=profile_source_path,
+                profile_facts=profile_facts,
+            )
+            if not supported:
+                confidence = "low"
+            else:
+                profile_source_path = inferred_path or profile_source_path
+                profile_evidence = inferred_evidence
         else:
             confidence = item.confidence
         grounded.append(
@@ -439,6 +477,8 @@ def _ground_evidence(
                 claim=clean_claim,
                 evidence_from_job=item.evidence_from_job.strip(),
                 profile_signal=item.profile_signal.strip() if item.profile_signal else None,
+                profile_source_path=profile_source_path,
+                profile_evidence=profile_evidence,
                 severity=_normalize_evidence_severity(item.severity, clean_claim, evidence_text),
                 confidence=confidence,
                 source="llm",
@@ -452,13 +492,75 @@ def _claim_is_allowed(claim: str, allowed_claims: list[str]) -> bool:
     return any(lowered_claim in allowed.lower() or allowed.lower() in lowered_claim for allowed in allowed_claims)
 
 
-def _profile_signal_is_supported(profile_signal: str, profile_text: str) -> bool:
+def _profile_signal_is_supported(profile_signal: str, profile_facts: list[tuple[str, str]]) -> bool:
+    supported, _, _ = _profile_signal_support(
+        profile_signal=profile_signal,
+        requested_path=None,
+        profile_facts=profile_facts,
+    )
+    return supported
+
+
+def _profile_signal_support(
+    profile_signal: str,
+    requested_path: str | None,
+    profile_facts: list[tuple[str, str]],
+) -> tuple[bool, str | None, str | None]:
+    lowered_signal = profile_signal.lower()
+    if any(marker in lowered_signal for marker in ["not listed", "not in the profile", "missing", "lacks", "no evidence"]):
+        return True, None, None
+    if requested_path:
+        for path, value in profile_facts:
+            if path == requested_path and _profile_signal_matches_fact(profile_signal, value):
+                return True, path, value
+    best_path = None
+    best_value = None
+    best_score = 0
+    for path, value in profile_facts:
+        score = _profile_fact_overlap_score(profile_signal, value)
+        if score > best_score:
+            best_score = score
+            best_path = path
+            best_value = value
+    if best_score > 0:
+        return True, best_path, best_value
+    return False, None, None
+
+
+def _profile_signal_matches_fact(profile_signal: str, fact_value: str) -> bool:
+    return _profile_fact_overlap_score(profile_signal, fact_value) > 0
+
+
+def _profile_fact_overlap_score(profile_signal: str, fact_value: str) -> int:
     terms = [
         term
-        for term in profile_signal.lower().replace("/", " ").replace("-", " ").split()
+        for term in re.split(r"[^a-z0-9#+]+", profile_signal.lower())
         if len(term) >= 4 and term not in {"with", "experience", "profile", "listed", "background", "current"}
     ]
-    return not terms or any(term in profile_text for term in terms[:5])
+    fact_text = fact_value.lower()
+    return sum(term in fact_text for term in terms[:8])
+
+
+def _flatten_profile_facts(profile: dict[str, Any]) -> list[tuple[str, str]]:
+    facts: list[tuple[str, str]] = []
+
+    def collect(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                nested_path = f"{path}.{key}" if path else str(key)
+                collect(nested, nested_path)
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                collect(nested, f"{path}[{index}]")
+        elif isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned:
+                facts.append((path, cleaned))
+        elif value is not None:
+            facts.append((path, str(value)))
+
+    collect(profile, "")
+    return facts
 
 
 def _job_evidence_text(job: ParsedJob) -> str:

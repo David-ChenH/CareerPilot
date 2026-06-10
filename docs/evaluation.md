@@ -12,7 +12,7 @@ The job-analysis eval runner executes representative job descriptions against a 
 eval profile
   -> job description fixture
   -> coordinator.analyze(save=False)
-  -> parser/scorer/guidance output
+  -> parser/scorer/validator/guidance output
   -> assertions on score, priority, recommendation, gaps, concerns, and extracted skills
 ```
 
@@ -23,11 +23,14 @@ The current fixtures cover:
 - a frontend/prompt-tooling role that should be low fit
 - a backend/platform role that should not hallucinate RAG gaps
 - a language-alternative role where C#, C++, or JavaScript should not become hard blockers when Java is accepted
+- a Databricks-style language-alternative role where `either Java, Scala or C++` should not make C++ a barrier for a Java-capable profile
 - a backend AI-platform role where preferred ML depth should be treated as a growth area, not a blocker
 
 This gives us a regression harness for the failure modes we care about most: over-recommending weak roles, missing important gaps, and producing repeated or unsupported concerns.
 
 The eval assertions are deterministic quality checks over generated output. They are not a replacement for semantic scoring. The model can still reason flexibly, but the product can reject known-bad output patterns such as unsupported gaps, duplicate concerns, or missing evidence.
+
+The production analysis path also includes a bounded LLM fit validator. The validator is not a free-form chatbot; it returns a typed validation report and can trigger one repair pass for fit-only issues such as unsupported gaps, preferred-as-required mistakes, or alternative-requirement conflicts.
 
 For semantic categories, prefer canonical labels over exact prose. For example, an LLM might describe the same concern as "frontend-heavy," "mostly UI work," or "limited backend ownership." The user-facing sentence can vary, but the structured output should use stable labels such as `frontend_heavy`, `research_mismatch`, or `prompt_tooling_heavy`. This makes tests, UI grouping, and historical analysis more reliable without forcing the model to write awkward fixed phrases.
 

@@ -164,7 +164,8 @@ def _parse_llm_job_text(
                         "Preserve qualification strength carefully. Put only explicitly required, minimum, or must-have qualifications "
                         "into requirements and required_skills. Put preferred, optional, nice-to-have, bonus, or ambiguous unlabelled "
                         "qualification bullets into preferred_qualifications and preferred_skills. If several languages are connected "
-                        "by 'or' or introduced with 'including, but not limited to', preserve them as accepted alternatives rather than "
+                        "by 'or', 'either', 'one of', 'one or more', or introduced with phrases such as "
+                        "'including, but not limited to' or 'such as', preserve them as accepted alternatives rather than "
                         "implying that every language is individually required. Store those phrases in accepted_skill_alternatives and "
                         "do not repeat each option in required_skills. If education or experience paths appear contradictory, or the "
                         "text appears flattened without reliable section headings, preserve the affected statements in "
@@ -267,13 +268,10 @@ def _to_parsed_job(llm_job: LLMParsedJob, deterministic_job: ParsedJob, descript
         ambiguous_qualifications=llm_job.ambiguous_qualifications,
         required_skills=_remove_accepted_alternative_skills(
             llm_job.required_skills,
-            [*deterministic_job.accepted_skill_alternatives, *llm_job.accepted_skill_alternatives],
-        ),
-        preferred_skills=llm_job.preferred_skills,
-        accepted_skill_alternatives=_merge_strings(
-            deterministic_job.accepted_skill_alternatives,
             llm_job.accepted_skill_alternatives,
         ),
+        preferred_skills=llm_job.preferred_skills,
+        accepted_skill_alternatives=llm_job.accepted_skill_alternatives,
         compensation=llm_job.compensation,
         work_authorization=llm_job.work_authorization,
         role_focus=llm_job.role_focus,

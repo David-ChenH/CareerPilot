@@ -25,6 +25,8 @@ class EvidenceItem(BaseModel):
     claim: str
     evidence_from_job: str | None = None
     profile_signal: str | None = None
+    profile_source_path: str | None = None
+    profile_evidence: str | None = None
     severity: str | None = None
     confidence: str | None = None
     source: str = "analysis"

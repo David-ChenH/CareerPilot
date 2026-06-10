@@ -123,15 +123,16 @@ Each `AgentTask` persists:
 - YAML profile store: human-readable background and preferences.
 - SQLite repository: jobs, application state, chat sessions, prep plans, and agent tasks.
 - Analysis payload migrations: schema-versioned current projections plus append-only historical snapshots.
-- Job parser: deterministic normalization and extraction fallback.
-- LLM job parser: optional structured extraction layer when OpenAI credentials are configured.
+- Job parser: deterministic metadata and skill-hint extraction.
+- LLM job parser: structured requirement extraction and requirement-strength classification when OpenAI credentials are configured.
 - LLM job scorer: required semantic evaluator for career-transition-aware fit scoring.
+- LLM fit validator: bounded critique and one repair pass for unsupported or inconsistent fit claims.
 - Job fetcher: combines canonical `JobPosting` JSON-LD metadata with Playwright-rendered content for individual URL analysis, preserving ordered section blocks for semantic classification.
 - Learned selector store: records declarative content-root selectors per careers domain, promotes them after repeated successful validation, and rediscovers extraction paths when a site drifts.
 - Agent-skill catalog: loads framework-neutral reusable guidance such as safe career-page extraction instructions.
 - Workflow executor: runs validated DAG templates with allow-listed tools, dependency-output passing, failure blocking, and in-memory trace events.
 - Fit contract: typed semantic score, explanation, and evidence models.
-- Evidence model: structured support for matches, gaps, concerns, recommendations, and guidance.
+- Evidence model: structured support for matches, gaps, concerns, recommendations, guidance, and profile-source grounding.
 - Agent coordinator: combines parser, scorer, storage, and suggestions.
 - Agent task lifecycle: persistent local workflow state for background operations.
 - Workflow runtime: validates typed DAG templates, runs allow-listed tools, passes dependency outputs, blocks failed dependents, and records in-memory trace events.
@@ -176,7 +177,9 @@ The same rule now applies to other durable artifacts:
 
 Generated artifacts include provenance metadata: generator type, schema version, workflow version, prompt version when applicable, model when applicable, and creation time.
 
-Job fit distinguishes missing hard requirements (`fit.gaps`) from preferred, optional, ambiguous, or useful-to-validate capabilities (`fit.growth_areas`). The semantic scorer also treats language lists connected by `or` or phrases such as `including, but not limited to` as alternatives rather than independent obligations. If ingestion loses reliable qualification headings, the parser records those statements in `parsed_job.ambiguous_qualifications` so the scorer does not turn uncertain source structure into blockers.
+Job fit distinguishes missing hard requirements (`fit.gaps`) from preferred, optional, ambiguous, or useful-to-validate capabilities (`fit.growth_areas`). The LLM parser is responsible for semantic requirement classification, including accepted alternatives such as `either Java, Scala or C++`. The scorer consumes that parsed structure, and the fit validator checks the final fit for unsupported gaps, alternative-requirement conflicts, preferred-as-required mistakes, unsupported concerns, duplicate semantics, and profile-evidence mismatches. If validation returns a repairable issue, the workflow runs one fit repair pass before guidance is generated.
+
+Fit evidence is grounded in both directions. Job evidence must quote or closely paraphrase the parsed job. Profile evidence can include `profile_signal`, `profile_source_path`, and `profile_evidence`, which lets the UI explain which local profile fact supported a match or recommendation. The LLM still owns semantic judgment, while backend validation checks whether cited job/profile evidence exists before presenting it as grounded.
 
 URL analysis persists a typed `ExtractedJobPosting` artifact with metadata, ordered `{heading, items, source, order}` sections, extraction source, and warnings. Deterministic tools preserve page structure; the LLM parser classifies the semantic meaning of those blocks without relying on a fixed heading-name catalog.
 

@@ -28,6 +28,8 @@ export type EvidenceItem = {
   claim: string;
   evidence_from_job?: string | null;
   profile_signal?: string | null;
+  profile_source_path?: string | null;
+  profile_evidence?: string | null;
   severity?: string | null;
   confidence?: string | null;
   source?: string | null;
@@ -80,6 +82,28 @@ export type JobApplicationGuidance = {
   evidence?: Record<string, EvidenceItem[]>;
 };
 
+export type AnalysisValidationIssue = {
+  type:
+    | "alternative_requirement_conflict"
+    | "unsupported_gap"
+    | "preferred_as_required"
+    | "unsupported_concern"
+    | "duplicated_semantics"
+    | "profile_evidence_mismatch"
+    | "recommendation_inconsistency";
+  severity: "low" | "medium" | "high";
+  field: string;
+  claim: string;
+  evidence?: string | null;
+  repair_instruction: string;
+};
+
+export type AnalysisValidationReport = {
+  status: "pass" | "repair_required" | "fail";
+  issues: AnalysisValidationIssue[];
+  summary: string;
+};
+
 export type JobRecord = {
   id: number;
   source_url?: string | null;
@@ -102,6 +126,9 @@ export type JobAnalysisResponse = {
   parser_used: string;
   parser_warning?: string | null;
   scorer_used: string;
+  validation_report?: AnalysisValidationReport | null;
+  validation_used?: string;
+  validation_warning?: string | null;
   guidance: JobApplicationGuidance;
   guidance_used: string;
   guidance_warning?: string | null;

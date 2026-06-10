@@ -18,6 +18,12 @@ from app.tools.llm_job_guidance import (
     LLMJobGuidanceUnavailable,
     generate_job_guidance_with_llm,
 )
+from app.tools.llm_fit_validator import (
+    AnalysisValidationReport,
+    LLMFitValidationUnavailable,
+    repair_fit_with_llm,
+    validate_fit_with_llm,
+)
 from app.tools.llm_job_parser import LLMJobParserUnavailable, parse_job_with_llm, parse_large_job_with_llm
 from app.tools.llm_job_scorer import score_job_fit_with_llm
 from app.tools.profile_update_intent import extract_profile_updates_from_message
@@ -43,6 +49,9 @@ class JobAnalysisResponse(BaseModel):
     parser_used: str
     parser_warning: str | None = None
     scorer_used: str
+    validation_report: AnalysisValidationReport | None = None
+    validation_used: str = "disabled"
+    validation_warning: str | None = None
     guidance: JobApplicationGuidance
     guidance_used: str
     guidance_warning: str | None = None
@@ -171,6 +180,11 @@ class JobSearchCoordinator:
             job=parsed_job,
         )
         scorer_used = "llm"
+        fit, validation_report, validation_used, validation_warning = _validate_and_repair_fit(
+            profile=profile,
+            parsed_job=parsed_job,
+            fit=fit,
+        )
 
         guidance = JobApplicationGuidance()
         guidance_used = "disabled"
@@ -195,6 +209,9 @@ class JobSearchCoordinator:
             parser_used=parser_used,
             parser_warning=parser_warning,
             scorer_used=scorer_used,
+            validation_report=validation_report,
+            validation_used=validation_used,
+            validation_warning=validation_warning,
             guidance=guidance,
             guidance_used=guidance_used,
             guidance_warning=guidance_warning,
@@ -549,6 +566,44 @@ def _analysis_provenance(analysis: JobAnalysisResponse):
         prompt_version=JOB_ANALYSIS_PROMPT_VERSION if used_llm else None,
         model=configured_llm_model(DEFAULT_LLM_MODEL) if used_llm else None,
     )
+
+
+def _validate_and_repair_fit(
+    *,
+    profile: dict,
+    parsed_job: ParsedJob,
+    fit: JobFit,
+) -> tuple[JobFit, AnalysisValidationReport | None, str, str | None]:
+    try:
+        report = validate_fit_with_llm(profile=profile, job=parsed_job, fit=fit)
+    except LLMFitValidationUnavailable as error:
+        return fit, None, "unavailable", str(error)
+
+    if report.status == "pass":
+        return fit, report, "llm", None
+
+    if report.status == "repair_required":
+        try:
+            repaired_fit = repair_fit_with_llm(
+                profile=profile,
+                job=parsed_job,
+                fit=fit,
+                validation_report=report,
+            )
+            repaired_report = validate_fit_with_llm(profile=profile, job=parsed_job, fit=repaired_fit)
+        except LLMFitValidationUnavailable as error:
+            return fit, report, "repair_failed", str(error)
+
+        if repaired_report.status == "pass":
+            return repaired_fit, repaired_report, "llm_repaired", None
+        return (
+            repaired_fit,
+            repaired_report,
+            "llm_repair_unresolved",
+            f"Fit validation still returned {repaired_report.status} after one repair pass.",
+        )
+
+    return fit, report, "llm_failed", "Fit validation failed; review the analysis before relying on it."
 
 
 def _profile_update_answer(updates: dict[str, list[str]]) -> str:

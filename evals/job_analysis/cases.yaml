@@ -104,6 +104,43 @@ cases:
       require_evidence:
         - field: "fit.gaps"
 
+  - id: databricks-either-language-alternatives
+    name: "Either Java, Scala, or C++ should be treated as alternatives"
+    description: "If a distributed-systems role accepts either Java, Scala, or C++, analysis should not frame C++ as a hard requirement or barrier for a Java-capable backend profile."
+    source_url: "https://www.databricks.com/company/careers/engineering---pipeline/senior-software-engineer---distributed-data-systems-6936994002"
+    job_description: |
+      Senior Software Engineer - Distributed Data Systems
+      Company: Databricks
+      Location: Bellevue, Washington
+
+      As a software engineer on the Runtime team at Databricks, you will be building
+      the next generation distributed data storage and processing systems that can
+      outperform specialized SQL query engines and support workloads ranging from
+      ETL to data science. Example projects include Apache Spark, Data Plane Storage
+      on cloud storage backends such as AWS S3, Delta Lake, Delta Pipelines, and
+      performance engineering for query optimization.
+
+      What we look for:
+      BS or higher in Computer Science, related technical field, or equivalent practical experience.
+      5+ years of production level experience in either Java, Scala or C++.
+      Strong foundation in algorithms and data structures and their real-world use cases.
+      Experience with distributed systems, databases, and big data systems such as Apache Spark or Hadoop.
+    expectations:
+      min_score: 65
+      required:
+        - field: "parsed.accepted_skill_alternatives"
+          terms: ["Java", "Scala", "C++"]
+      forbidden:
+        - field: "fit.gaps"
+          terms: ["C++"]
+        - field: "fit.growth_areas"
+          terms: ["C++ is highlighted as a required skill", "C++ proficiency"]
+        - field: "fit.concerns"
+          terms: ["C++ as a primary language", "C++ could be a barrier"]
+      no_duplicates:
+        - "fit.concerns"
+        - "fit.gaps"
+
   - id: preferred-ml-depth-not-blocker
     name: "Preferred ML depth should be treated as growth area, not blocker"
     description: "Preferred ML evaluation/training exposure can be a learning area, but should not be framed as a hard blocker for a backend/platform role."

@@ -245,6 +245,8 @@ There is no deterministic scorer fallback. If semantic scoring is unavailable, t
 
 Evidence-grounded analysis is now part of the contract. A gap or concern should not be just a naked claim; it should carry job evidence, a profile signal when relevant, severity, confidence, and source. Unsupported evidence is filtered before it reaches the UI.
 
+Profile-aware evidence adds another layer of traceability. The scorer may include `profile_source_path` and `profile_evidence` for positive profile claims, such as `technical_strengths[0] -> Java` or `experience_highlights[3] -> Designed public pricing APIs`. This does not make the backend the semantic judge. The LLM still decides whether the role fits; deterministic code checks whether the cited profile fact exists and lowers confidence when the citation is unsupported. This is the production pattern to remember: use the model for judgment, use typed contracts and grounding checks for trust.
+
 `app/tools/llm_job_guidance.py`
 
 Optional LLM-backed application guidance. It turns parsed job facts and fit scoring into actionable output:
@@ -345,9 +347,11 @@ The analysis response is generated in stages:
 ```text
 job text / URL
   -> fetch readable text if needed
-  -> deterministic parser
-  -> optional LLM structured parser
+  -> deterministic metadata hints
+  -> LLM structured requirement parser
   -> required LLM semantic scoring
+  -> LLM fit validation
+  -> one fit repair pass if needed
   -> optional LLM guidance generation
   -> resume emphasis suggestions
   -> prep topic suggestions
@@ -372,13 +376,13 @@ This makes the app more flexible for career-transition use cases without present
 
 ### Deterministic Code Role
 
-Deterministic code now serves three narrower purposes:
+Deterministic code now serves narrower purposes:
 
 - normalize and pre-process fetched job text
-- provide a parsing fallback when structured extraction is unavailable
-- validate LLM evidence against the supplied profile and posting
+- provide metadata and skill hints such as title, company, location, and obvious technologies
+- validate schemas, evidence, duplicate strings, canonical labels, and consistency
 
-It should not become an ever-growing catalog of every possible technology. New skill discovery and gap judgment come from LLM structured extraction and semantic scoring. If semantic scoring is unavailable, CareerPilot returns an explicit unavailable response.
+It should not become an ever-growing catalog of every possible technology or requirement phrase. Requirement strength, accepted alternatives, preferred-vs-required distinctions, and gap judgment come from LLM structured extraction, semantic scoring, and fit validation. If semantic scoring is unavailable, CareerPilot returns an explicit unavailable response.
 
 ### 6. Human-in-the-loop updates
 

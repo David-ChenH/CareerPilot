@@ -373,7 +373,7 @@ export function App() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1320px] px-5 py-5 sm:px-8">
+        <main className="mx-auto max-w-[1540px] px-5 py-5 sm:px-8">
           {activeView === "dashboard" ? <DashboardView jobs={jobsQuery.data ?? []} onNavigate={setActiveView} /> : null}
           {activeView === "analyze" ? (
             <AnalyzeJobView
@@ -1145,6 +1145,7 @@ function GlobalAssistantView() {
     if (!trimmed || chatMutation.isPending) {
       return;
     }
+    setMessage("");
     setDraftMessages((current) => [
       ...current,
       {
@@ -1372,7 +1373,7 @@ function AnalyzeJobView({
   onGenerateResume: (analysis: JobAnalysisResponse) => void;
 }) {
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(520px,0.9fr)_minmax(420px,1fr)]">
+    <div className="grid gap-4 2xl:grid-cols-[minmax(380px,460px)_minmax(720px,1fr)]">
       <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
         <SectionHeader icon={<FileSearch size={20} />} title="Analyze a Job" subtitle="Choose the input path that matches what you have." />
 
@@ -1724,11 +1725,12 @@ function buildAnalysisReviewSections(analysis: JobAnalysisResponse): AnalysisRev
     {
       title: "Why Apply",
       intent: "Positive evidence for spending time on this role.",
-      items: buildReviewItems(guidance.apply_reasoning.length ? guidance.apply_reasoning : fit.strong_matches, [
-        ...(guidance.evidence?.apply_reasoning ?? []),
-        ...(fit.evidence?.strong_matches ?? []),
-        ...(fit.evidence?.recommendation ?? [])
-      ]),
+      items: buildReviewItems(
+        guidance.apply_reasoning.length ? guidance.apply_reasoning : fit.strong_matches,
+        guidance.apply_reasoning.length
+          ? guidance.evidence?.apply_reasoning ?? []
+          : [...(fit.evidence?.strong_matches ?? []), ...(fit.evidence?.recommendation ?? [])]
+      ),
       empty: "No strong apply reason was generated yet."
     },
     {
@@ -1783,10 +1785,44 @@ function buildAnalysisReviewSections(analysis: JobAnalysisResponse): AnalysisRev
 }
 
 function buildReviewItems(items: string[], evidenceItems: EvidenceItem[]): AnalysisReviewItem[] {
-  return items.map((item) => ({
-    text: item,
-    evidence: evidenceItems.filter((evidence) => evidenceMatchesItem(evidence, item))
-  }));
+  const dedupedEvidence = dedupeEvidenceItems(evidenceItems);
+  const usedEvidenceKeys = new Set<string>();
+  return items.map((item, index) => {
+    const directMatches = dedupedEvidence.filter((evidence) => {
+      const key = evidenceKey(evidence);
+      return !usedEvidenceKeys.has(key) && evidenceMatchesItem(evidence, item);
+    });
+    const fallback = directMatches.length
+      ? []
+      : dedupedEvidence[index] && !usedEvidenceKeys.has(evidenceKey(dedupedEvidence[index]))
+        ? [dedupedEvidence[index]]
+        : [];
+    const evidence = [...directMatches, ...fallback].slice(0, 2);
+    evidence.forEach((entry) => usedEvidenceKeys.add(evidenceKey(entry)));
+    return {
+      text: item,
+      evidence
+    };
+  });
+}
+
+function dedupeEvidenceItems(items: EvidenceItem[]): EvidenceItem[] {
+  const seen = new Set<string>();
+  const deduped: EvidenceItem[] = [];
+  for (const item of items) {
+    const key = evidenceKey(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(item);
+    }
+  }
+  return deduped;
+}
+
+function evidenceKey(item: EvidenceItem): string {
+  return [item.claim, item.evidence_from_job, item.profile_signal, item.severity, item.confidence]
+    .map((value) => (value ?? "").trim().toLowerCase())
+    .join("|");
 }
 
 function dedupeAnalysisItems(items: string[]): string[] {
@@ -1918,6 +1954,7 @@ function AnalysisResult({
     if (!trimmed || chatMutation.isPending) {
       return;
     }
+    setChatMessage("");
     setMessages((current) => [
       ...current,
       {
@@ -2064,6 +2101,12 @@ function AnalysisReviewSection({
                   <div key={`${section.title}-${index}-evidence-${evidenceIndex}`}>
                     {evidence.evidence_from_job ? <p><strong>Job evidence:</strong> {evidence.evidence_from_job}</p> : null}
                     {evidence.profile_signal ? <p><strong>Profile:</strong> {evidence.profile_signal}</p> : null}
+                    {evidence.profile_source_path ? (
+                      <p className="text-teal-800">
+                        <strong>Profile source:</strong> {evidence.profile_source_path}
+                        {evidence.profile_evidence ? ` · ${evidence.profile_evidence}` : ""}
+                      </p>
+                    ) : null}
                     <p className="text-teal-800">
                       {[evidence.severity, evidence.confidence ? `${evidence.confidence} confidence` : null].filter(Boolean).join(" · ")}
                     </p>

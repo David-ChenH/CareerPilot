@@ -41,9 +41,11 @@ from app.tools.resume_generator import generate_resume_artifact, generate_resume
 from app.tools.analysis_feedback import record_analysis_feedback
 from app.tools.llm_job_parser import (
     CHUNK_CHARS,
+    LLMParsedJob,
     MAX_CHUNKS,
     MAX_STRUCTURE_ARTIFACT_CHARS,
     _structure_artifact_json,
+    _to_parsed_job,
     select_job_chunks,
 )
 from app.tools.llm_job_scorer import (
@@ -54,6 +56,7 @@ from app.tools.llm_job_scorer import (
     _partition_hard_gaps,
     score_job_fit_with_llm,
 )
+from app.tools.llm_fit_validator import AnalysisValidationIssue, AnalysisValidationReport, LLMFitValidationUnavailable
 from app.tools.llm_job_guidance import JobApplicationGuidance, _dedupe_text
 from app.tools.scoring import JobFit
 from app.tools.text_budget import MAX_JOB_ANALYSIS_CHARS, compact_job_text
@@ -154,6 +157,10 @@ def fake_semantic_scorer(monkeypatch) -> None:
         )
 
     monkeypatch.setattr("app.agents.coordinator.score_job_fit_with_llm", evaluate)
+    monkeypatch.setattr(
+        "app.agents.coordinator.validate_fit_with_llm",
+        lambda profile, job, fit: AnalysisValidationReport(status="pass", summary="Valid fit."),
+    )
 
 
 def test_analyze_high_fit_ai_platform_job(tmp_path: Path) -> None:
@@ -528,6 +535,127 @@ def test_llm_parser_falls_back_without_api_key(tmp_path: Path, monkeypatch) -> N
     assert response.guidance_warning == "OPENAI_API_KEY is not set."
 
 
+def test_fit_validation_pass_leaves_fit_unchanged(tmp_path: Path, monkeypatch) -> None:
+    report = AnalysisValidationReport(status="pass", summary="Looks grounded.")
+    monkeypatch.setattr("app.agents.coordinator.validate_fit_with_llm", lambda profile, job, fit: report)
+
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+
+    response = coordinator.analyze(
+        JobAnalysisRequest(
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Java backend services.",
+            use_llm=False,
+            use_llm_guidance=False,
+        )
+    )
+
+    assert response.fit.summary == "Test semantic evaluator found a strong role fit."
+    assert response.validation_report == report
+    assert response.validation_used == "llm"
+    assert response.validation_warning is None
+
+
+def test_fit_validation_repair_runs_once(tmp_path: Path, monkeypatch) -> None:
+    calls = {"validate": 0, "repair": 0}
+    repair_required = AnalysisValidationReport(
+        status="repair_required",
+        summary="C++ is incorrectly treated as a barrier.",
+        issues=[
+            AnalysisValidationIssue(
+                type="alternative_requirement_conflict",
+                severity="high",
+                field="fit.growth_areas",
+                claim="C++ is a barrier.",
+                evidence="either Java, Scala or C++",
+                repair_instruction="Remove C++ as a barrier because Java satisfies the alternative.",
+            )
+        ],
+    )
+    pass_report = AnalysisValidationReport(status="pass", summary="Repaired fit is valid.")
+
+    def validate(profile, job, fit):
+        del profile, job, fit
+        calls["validate"] += 1
+        return repair_required if calls["validate"] == 1 else pass_report
+
+    def repair(profile, job, fit, validation_report):
+        del profile, job, validation_report
+        calls["repair"] += 1
+        return fit.model_copy(update={"growth_areas": [], "summary": "Repaired summary."})
+
+    monkeypatch.setattr("app.agents.coordinator.validate_fit_with_llm", validate)
+    monkeypatch.setattr("app.agents.coordinator.repair_fit_with_llm", repair)
+
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+
+    response = coordinator.analyze(
+        JobAnalysisRequest(
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Java backend services.",
+            use_llm=False,
+            use_llm_guidance=False,
+        )
+    )
+
+    assert calls == {"validate": 2, "repair": 1}
+    assert response.fit.summary == "Repaired summary."
+    assert response.validation_report == pass_report
+    assert response.validation_used == "llm_repaired"
+    assert response.validation_warning is None
+
+
+def test_fit_validation_unresolved_repair_records_warning(tmp_path: Path, monkeypatch) -> None:
+    repair_required = AnalysisValidationReport(status="repair_required", summary="Needs repair.")
+
+    monkeypatch.setattr("app.agents.coordinator.validate_fit_with_llm", lambda profile, job, fit: repair_required)
+    monkeypatch.setattr("app.agents.coordinator.repair_fit_with_llm", lambda profile, job, fit, validation_report: fit)
+
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+
+    response = coordinator.analyze(
+        JobAnalysisRequest(
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Java backend services.",
+            use_llm=False,
+            use_llm_guidance=False,
+        )
+    )
+
+    assert response.validation_used == "llm_repair_unresolved"
+    assert response.validation_warning == "Fit validation still returned repair_required after one repair pass."
+
+
+def test_fit_validation_unavailable_records_warning(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agents.coordinator.validate_fit_with_llm",
+        lambda profile, job, fit: (_ for _ in ()).throw(LLMFitValidationUnavailable("validator down")),
+    )
+
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+
+    response = coordinator.analyze(
+        JobAnalysisRequest(
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Java backend services.",
+            use_llm=False,
+            use_llm_guidance=False,
+        )
+    )
+
+    assert response.validation_report is None
+    assert response.validation_used == "unavailable"
+    assert response.validation_warning == "validator down"
+
+
 def test_semantic_scorer_fails_explicitly_without_api_key(monkeypatch) -> None:
     monkeypatch.setenv("JOB_AGENT_DISABLE_DOTENV", "1")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -764,14 +892,62 @@ def test_llm_gap_filter_does_not_treat_accepted_language_alternatives_as_separat
     assert filtered == []
 
 
-def test_deterministic_parser_preserves_accepted_language_alternatives() -> None:
+def test_llm_gap_filter_handles_either_java_scala_or_cpp_alternatives() -> None:
+    job = ParsedJob(
+        title="Senior Software Engineer - Distributed Data Systems",
+        company="Databricks",
+        description="What we look for: 5+ years of production level experience in either Java, Scala or C++.",
+        skills=["java", "scala", "c++", "distributed systems"],
+        requirements=["5+ years of production level experience in either Java, Scala or C++."],
+        accepted_skill_alternatives=["5+ years of production level experience in either Java, Scala or C++."],
+    )
+    profile = {"technical_strengths": ["Java", "Python", "AWS", "distributed systems"]}
+
+    filtered = _filter_grounded_items(
+        [
+            "C++ is highlighted as a required skill, but not mentioned in the profile.",
+            "C++ proficiency for production environments.",
+            "Scala production experience.",
+        ],
+        job,
+        profile,
+    )
+
+    assert filtered == []
+
+
+def test_deterministic_parser_does_not_classify_accepted_language_alternatives() -> None:
     parsed = parse_job_description(
         "Coding experience in languages including, but not limited to, C, C++, C#, Java, or Python."
     )
 
+    assert parsed.accepted_skill_alternatives == []
+
+
+def test_llm_parser_output_owns_accepted_language_alternatives() -> None:
+    deterministic = parse_job_description(
+        "Senior Software Engineer\nCompany: Databricks\n"
+        "What we look for: 5+ years of production level experience in either Java, Scala or C++."
+    )
+    parsed = _to_parsed_job(
+        LLMParsedJob(
+            title="Senior Software Engineer",
+            company="Databricks",
+            skills=["Java", "Scala", "C++"],
+            required_skills=["Java", "Scala", "C++"],
+            requirements=["5+ years of production level experience in either Java, Scala or C++."],
+            accepted_skill_alternatives=[
+                "5+ years of production level experience in either Java, Scala or C++."
+            ],
+        ),
+        deterministic,
+        deterministic.description,
+    )
+
     assert parsed.accepted_skill_alternatives == [
-        "Coding experience in languages including, but not limited to, C, C++, C#, Java, or Python."
+        "5+ years of production level experience in either Java, Scala or C++."
     ]
+    assert parsed.required_skills == []
 
 
 def test_llm_gap_partition_keeps_required_items_and_downgrades_preferred_items() -> None:
@@ -849,6 +1025,8 @@ def test_llm_evidence_filter_requires_job_grounding() -> None:
 
     assert [item.claim for item in evidence] == ["Java distributed systems overlap"]
     assert evidence[0].evidence_from_job == "Required Qualifications: Java, distributed systems."
+    assert evidence[0].profile_source_path == "technical_strengths[0]"
+    assert evidence[0].profile_evidence == "Java"
 
 
 def test_llm_evidence_filter_rejects_unsupported_language_blocker() -> None:
@@ -876,6 +1054,73 @@ def test_llm_evidence_filter_rejects_unsupported_language_blocker() -> None:
     )
 
     assert evidence == []
+
+
+def test_llm_evidence_uses_requested_profile_source_path_when_supported() -> None:
+    job = ParsedJob(
+        title="Backend Platform Engineer",
+        company="Example",
+        description="Build distributed backend APIs for cloud services.",
+        skills=["distributed systems", "backend"],
+        requirements=["distributed backend APIs"],
+    )
+    profile = {
+        "experience_highlights": [
+            "Designed public pricing APIs and distributed control plane services at AWS.",
+        ],
+        "technical_strengths": ["Java", "Python"],
+    }
+
+    evidence = _ground_evidence(
+        [
+            LLMFitEvidence(
+                claim="Distributed backend API experience aligns with the role",
+                evidence_from_job="Build distributed backend APIs for cloud services.",
+                profile_signal="Designed public pricing APIs and distributed control plane services at AWS.",
+                profile_source_path="experience_highlights[0]",
+                severity="positive",
+                confidence="high",
+            )
+        ],
+        job,
+        profile,
+        allowed_claims=None,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].profile_source_path == "experience_highlights[0]"
+    assert evidence[0].profile_evidence == "Designed public pricing APIs and distributed control plane services at AWS."
+    assert evidence[0].confidence == "high"
+
+
+def test_llm_evidence_marks_unsupported_profile_signal_low_confidence() -> None:
+    job = ParsedJob(
+        title="Backend Platform Engineer",
+        company="Example",
+        description="Build distributed backend APIs for cloud services.",
+        skills=["distributed systems", "backend"],
+        requirements=["distributed backend APIs"],
+    )
+
+    evidence = _ground_evidence(
+        [
+            LLMFitEvidence(
+                claim="Backend API experience aligns with the role",
+                evidence_from_job="Build distributed backend APIs for cloud services.",
+                profile_signal="Profile shows deep Rust compiler experience.",
+                severity="positive",
+                confidence="high",
+            )
+        ],
+        job,
+        {"technical_strengths": ["Java", "Python"]},
+        allowed_claims=None,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].profile_source_path is None
+    assert evidence[0].profile_evidence is None
+    assert evidence[0].confidence == "low"
 
 
 def test_html_fetcher_prefers_structured_job_posting_json_ld() -> None:

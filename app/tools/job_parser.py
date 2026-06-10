@@ -81,7 +81,6 @@ def parse_job_description(
         location=_extract_labeled_value(text, "location"),
         seniority=_extract_seniority(text),
         skills=_extract_skills(text),
-        accepted_skill_alternatives=_extract_accepted_skill_alternatives(text),
         description=text,
     )
 
@@ -205,18 +204,6 @@ def _extract_skills(text: str) -> list[str]:
     return sorted(skills)
 
 
-def _extract_accepted_skill_alternatives(text: str) -> list[str]:
-    alternatives = []
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
-        lowered = sentence.lower()
-        if (
-            ("including, but not limited to" in lowered or " or " in lowered)
-            and len(_language_terms(lowered)) >= 2
-        ):
-            alternatives.append(" ".join(sentence.split()))
-    return alternatives
-
-
 def _language_terms(text: str) -> set[str]:
     lowered = text.lower()
     return {
@@ -227,6 +214,7 @@ def _language_terms(text: str) -> set[str]:
             "c#": r"c#|c sharp|csharp",
             "java": r"(?<![a-z0-9])java(?![a-z0-9])",
             "python": r"(?<![a-z0-9])python(?![a-z0-9])",
+            "scala": r"(?<![a-z0-9])scala(?![a-z0-9])",
         }.items()
         if re.search(pattern, lowered)
     }
