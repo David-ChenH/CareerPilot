@@ -30,6 +30,17 @@ from app.tools.profile_update_intent import extract_profile_updates_from_message
 from app.tools.scoring import JobFit
 from app.tools.text_budget import compact_job_text
 from app.tools.llm_job_chat import DEFAULT_LLM_MODEL
+from app.workflows import (
+    ModelTier,
+    WorkflowDefinition,
+    WorkflowExecutionError,
+    WorkflowExecutor,
+    WorkflowGraph,
+    WorkflowRun,
+    WorkflowTask,
+    WorkflowToolRegistry,
+    workflow_graph_from_run,
+)
 
 
 class JobAnalysisRequest(BaseModel):
@@ -58,6 +69,8 @@ class JobAnalysisResponse(BaseModel):
     saved_job: JobRecord | None = None
     resume_emphasis: list[str] = Field(default_factory=list)
     prep_topics: list[str] = Field(default_factory=list)
+    workflow_graph: WorkflowGraph | None = None
+    workflow_run: WorkflowRun | None = None
 
 
 class JobChatRequest(BaseModel):
@@ -139,9 +152,88 @@ class JobSearchCoordinator:
         self.repository = repository or JobRepository()
 
     def analyze(self, request: JobAnalysisRequest) -> JobAnalysisResponse:
+        workflow = _build_job_analysis_workflow(request)
+        registry = WorkflowToolRegistry()
+        registry.register("load_profile", lambda task_input, dependency_outputs: self._workflow_load_profile(task_input, dependency_outputs))
+        registry.register("prepare_input", lambda task_input, dependency_outputs: self._workflow_prepare_input(request, task_input, dependency_outputs))
+        registry.register("parse_job", lambda task_input, dependency_outputs: self._workflow_parse_job(request, task_input, dependency_outputs))
+        registry.register("score_fit", lambda task_input, dependency_outputs: self._workflow_score_fit(task_input, dependency_outputs))
+        registry.register("validate_fit", lambda task_input, dependency_outputs: self._workflow_validate_fit(task_input, dependency_outputs))
+        registry.register("generate_guidance", lambda task_input, dependency_outputs: self._workflow_generate_guidance(request, task_input, dependency_outputs))
+        run = WorkflowExecutor(registry).execute(workflow)
+        if run.status == "failed":
+            raise WorkflowExecutionError(_workflow_error_from_run(run))
+
+        profile = run.outputs["load_profile"]["profile"]
+        parse_output = run.outputs["parse_job"]
+        fit_output = run.outputs["validate_fit"]
+        guidance_output = run.outputs["generate_guidance"]
+        parsed_job = parse_output["parsed_job"]
+        fit = fit_output["fit"]
+        guidance = guidance_output["guidance"]
+        response_run = run.model_copy(update={"outputs": {}})
+        response = JobAnalysisResponse(
+            extracted_posting=request.extracted_posting,
+            parsed_job=parsed_job,
+            fit=fit,
+            parser_used=parse_output["parser_used"],
+            parser_warning=parse_output["parser_warning"],
+            scorer_used=run.outputs["score_fit"]["scorer_used"],
+            validation_report=fit_output["validation_report"],
+            validation_used=fit_output["validation_used"],
+            validation_warning=fit_output["validation_warning"],
+            guidance=guidance,
+            guidance_used=guidance_output["guidance_used"],
+            guidance_warning=guidance_output["guidance_warning"],
+            resume_emphasis=guidance.resume_guidance,
+            prep_topics=guidance.prep_plan,
+            workflow_graph=workflow_graph_from_run(response_run),
+            workflow_run=response_run,
+        )
+
+        if request.save:
+            provenance = _analysis_provenance(response)
+            response.saved_job = self.repository.save_job(
+                JobRecord(
+                    title=parsed_job.title,
+                    source_url=request.source_url,
+                    company=parsed_job.company,
+                    location=parsed_job.location,
+                    description=parsed_job.description,
+                    skills=parsed_job.skills,
+                    fit_score=fit.score,
+                    priority=fit.priority,
+                    status=ApplicationStatus.DISCOVERED,
+                    application_type=_classify_application_type(profile, parsed_job.company, request.source_url),
+                    analysis=response.model_dump(exclude={"saved_job"}),
+                    analysis_provenance=provenance,
+                )
+            )
+
+        return response
+
+    def _workflow_load_profile(self, _task_input: dict, _dependency_outputs: dict) -> dict:
         profile = self.profile_store.load()
+        return {
+            "profile": profile,
+            "summary": "Loaded local profile memory.",
+        }
+
+    def _workflow_prepare_input(self, request: JobAnalysisRequest, _task_input: dict, _dependency_outputs: dict) -> dict:
         compacted_text = compact_job_text(request.description)
-        analysis_text = compacted_text.text
+        return {
+            "compacted_text": compacted_text,
+            "analysis_text": compacted_text.text,
+            "summary": (
+                f"Prepared {compacted_text.compacted_length} characters"
+                + (f" from {compacted_text.original_length} original characters." if compacted_text.was_compacted else ".")
+            ),
+        }
+
+    def _workflow_parse_job(self, request: JobAnalysisRequest, _task_input: dict, dependency_outputs: dict) -> dict:
+        prepared = dependency_outputs["prepare_input"]
+        compacted_text = prepared["compacted_text"]
+        analysis_text = prepared["analysis_text"]
         deterministic_job = parse_job_description(
             analysis_text,
             source_url=request.source_url,
@@ -175,17 +267,47 @@ class JobSearchCoordinator:
             except LLMJobParserUnavailable as error:
                 parser_warning = str(error)
 
+        return {
+            "parsed_job": parsed_job,
+            "parser_used": parser_used,
+            "parser_warning": parser_warning,
+            "summary": f"Parsed {parsed_job.title or 'untitled job'} using {parser_used}.",
+        }
+
+    def _workflow_score_fit(self, _task_input: dict, dependency_outputs: dict) -> dict:
+        profile = dependency_outputs["load_profile"]["profile"]
+        parsed_job = dependency_outputs["parse_job"]["parsed_job"]
         fit = score_job_fit_with_llm(
             profile=profile,
             job=parsed_job,
         )
-        scorer_used = "llm"
+        return {
+            "fit": fit,
+            "scorer_used": "llm",
+            "summary": f"Scored fit as {fit.priority} priority with score {fit.score}.",
+        }
+
+    def _workflow_validate_fit(self, _task_input: dict, dependency_outputs: dict) -> dict:
+        profile = dependency_outputs["load_profile"]["profile"]
+        parsed_job = dependency_outputs["parse_job"]["parsed_job"]
+        fit = dependency_outputs["score_fit"]["fit"]
         fit, validation_report, validation_used, validation_warning = _validate_and_repair_fit(
             profile=profile,
             parsed_job=parsed_job,
             fit=fit,
         )
+        return {
+            "fit": fit,
+            "validation_report": validation_report,
+            "validation_used": validation_used,
+            "validation_warning": validation_warning,
+            "summary": _validation_summary(validation_used, validation_report, validation_warning),
+        }
 
+    def _workflow_generate_guidance(self, request: JobAnalysisRequest, _task_input: dict, dependency_outputs: dict) -> dict:
+        profile = dependency_outputs["load_profile"]["profile"]
+        parsed_job = dependency_outputs["parse_job"]["parsed_job"]
+        fit = dependency_outputs["validate_fit"]["fit"]
         guidance = JobApplicationGuidance()
         guidance_used = "disabled"
         guidance_warning = None
@@ -202,43 +324,12 @@ class JobSearchCoordinator:
                 guidance_used = "unavailable"
                 guidance_warning = str(error)
 
-        response = JobAnalysisResponse(
-            extracted_posting=request.extracted_posting,
-            parsed_job=parsed_job,
-            fit=fit,
-            parser_used=parser_used,
-            parser_warning=parser_warning,
-            scorer_used=scorer_used,
-            validation_report=validation_report,
-            validation_used=validation_used,
-            validation_warning=validation_warning,
-            guidance=guidance,
-            guidance_used=guidance_used,
-            guidance_warning=guidance_warning,
-            resume_emphasis=guidance.resume_guidance,
-            prep_topics=guidance.prep_plan,
-        )
-
-        if request.save:
-            provenance = _analysis_provenance(response)
-            response.saved_job = self.repository.save_job(
-                JobRecord(
-                    title=parsed_job.title,
-                    source_url=request.source_url,
-                    company=parsed_job.company,
-                    location=parsed_job.location,
-                    description=parsed_job.description,
-                    skills=parsed_job.skills,
-                    fit_score=fit.score,
-                    priority=fit.priority,
-                    status=ApplicationStatus.DISCOVERED,
-                    application_type=_classify_application_type(profile, parsed_job.company, request.source_url),
-                    analysis=response.model_dump(exclude={"saved_job"}),
-                    analysis_provenance=provenance,
-                )
-            )
-
-        return response
+        return {
+            "guidance": guidance,
+            "guidance_used": guidance_used,
+            "guidance_warning": guidance_warning,
+            "summary": f"Generated guidance using {guidance_used}.",
+        }
 
     def save_analysis(self, analysis: JobAnalysisResponse, source_url: str | None = None) -> JobRecord:
         parsed_job = analysis.parsed_job
@@ -566,6 +657,80 @@ def _analysis_provenance(analysis: JobAnalysisResponse):
         prompt_version=JOB_ANALYSIS_PROMPT_VERSION if used_llm else None,
         model=configured_llm_model(DEFAULT_LLM_MODEL) if used_llm else None,
     )
+
+
+def _build_job_analysis_workflow(request: JobAnalysisRequest) -> WorkflowDefinition:
+    return WorkflowDefinition(
+        id="job_analysis",
+        version=2,
+        description="Analyze pasted or fetched job text with parsing, scoring, validation, and guidance.",
+        tasks=[
+            WorkflowTask(
+                id="load_profile",
+                tool="load_profile",
+                description="Load local profile memory for fit evaluation.",
+                model_tier=ModelTier.NONE,
+            ),
+            WorkflowTask(
+                id="prepare_input",
+                tool="prepare_input",
+                description="Compact oversized job text and prepare analysis input.",
+                model_tier=ModelTier.NONE,
+            ),
+            WorkflowTask(
+                id="parse_job",
+                tool="parse_job",
+                description="Extract structured job facts and requirement semantics.",
+                dependencies=["prepare_input"],
+                model_tier=ModelTier.CHEAP if request.use_llm else ModelTier.NONE,
+            ),
+            WorkflowTask(
+                id="score_fit",
+                tool="score_fit",
+                description="Evaluate semantic fit against profile and target direction.",
+                dependencies=["load_profile", "parse_job"],
+                model_tier=ModelTier.STANDARD,
+            ),
+            WorkflowTask(
+                id="validate_fit",
+                tool="validate_fit",
+                description="Validate fit claims and repair once when needed.",
+                dependencies=["load_profile", "parse_job", "score_fit"],
+                model_tier=ModelTier.STANDARD,
+            ),
+            WorkflowTask(
+                id="generate_guidance",
+                tool="generate_guidance",
+                description="Generate apply rationale, prep actions, and resume guidance.",
+                dependencies=["load_profile", "parse_job", "validate_fit"],
+                model_tier=ModelTier.STANDARD if request.use_llm_guidance else ModelTier.NONE,
+            ),
+        ],
+    )
+
+
+def _workflow_error_from_run(run: WorkflowRun) -> str:
+    failed = next((task for task in run.tasks if task.status == "failed"), None)
+    if failed is None:
+        return "Workflow failed."
+    failed_events = [
+        event for event in run.trace_events if event.task_id == failed.id and event.event == "failed"
+    ]
+    if failed_events and failed_events[-1].detail:
+        return failed_events[-1].detail
+    return failed.error_type or "Workflow task failed."
+
+
+def _validation_summary(
+    validation_used: str,
+    validation_report: AnalysisValidationReport | None,
+    validation_warning: str | None,
+) -> str:
+    if validation_warning:
+        return f"Validation used {validation_used}: {validation_warning}"
+    if validation_report:
+        return f"Validation used {validation_used}: {validation_report.status} with {len(validation_report.issues)} issue(s)."
+    return f"Validation used {validation_used}."
 
 
 def _validate_and_repair_fit(

@@ -59,9 +59,42 @@ flowchart LR
   evals --> fixtures[Frozen Eval Fixtures]
 ```
 
+## Analysis workflow
+
+The core job-analysis path is an executor-backed DAG:
+
+```mermaid
+flowchart LR
+  profile["load_profile<br/>local profile memory"]
+  input["prepare_input<br/>compact job text"]
+  parse["parse_job<br/>structured job facts"]
+  score["score_fit<br/>semantic fit"]
+  validate["validate_fit<br/>critique and one repair"]
+  guidance["generate_guidance<br/>apply, prep, resume"]
+
+  input --> parse
+  profile --> score
+  parse --> score
+  profile --> validate
+  parse --> validate
+  score --> validate
+  profile --> guidance
+  parse --> guidance
+  validate --> guidance
+```
+
+`load_profile` and `prepare_input` are independent roots. `parse_job` extracts structured facts and requirement semantics. `score_fit` evaluates the role against the user profile and career direction. `validate_fit` checks unsupported claims and performs one repair pass when needed. `generate_guidance` produces apply rationale, prep actions, and resume guidance from the validated fit.
+
+The analysis API response includes:
+
+- `workflow_graph`: nodes, edges, version, and final task statuses.
+- `workflow_run`: execution status, task metadata, and trace events, excluding large tool outputs.
+
+This makes preview analysis observable without requiring a persistent background task row.
+
 ## Agent task lifecycle
 
-The first explicit task workflow is background job-link ingestion:
+Background job-link ingestion is the outer workflow for slow URL-based analysis:
 
 ```mermaid
 flowchart LR

@@ -1591,10 +1591,10 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
 
 function WorkflowGraphPreview({
   graph,
-  fallbackSteps
+  fallbackSteps = []
 }: {
   graph: NonNullable<AgentTask["artifacts"]["workflow_graph"]>;
-  fallbackSteps: AgentTask["steps"];
+  fallbackSteps?: AgentTask["steps"];
 }) {
   // Render backend-owned workflow semantics generically. The UI should not know
   // that job ingestion means fetch -> analyze -> save; it just receives nodes
@@ -2053,6 +2053,8 @@ function AnalysisResult({
           error={feedbackMutation.error}
         />
 
+        <AnalysisWorkflowTrace analysis={analysis} />
+
         <AssistantChatPanel
           chatError={chatMutation.error}
           contextLabel="Focus: analysis preview"
@@ -2068,6 +2070,45 @@ function AnalysisResult({
           useWebSearch={useWebSearch}
         />
       </div>
+    </section>
+  );
+}
+
+function AnalysisWorkflowTrace({ analysis }: { analysis: JobAnalysisResponse }) {
+  if (!analysis.workflow_graph && !analysis.workflow_run) {
+    return null;
+  }
+  return (
+    <section className="mt-4 rounded-lg border border-line bg-white p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold">Workflow Trace</h4>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            Observable analysis stages from input preparation through guidance generation.
+          </p>
+        </div>
+        {analysis.workflow_run ? <StatusPill status={analysis.workflow_run.status} /> : null}
+      </div>
+      {analysis.workflow_graph ? <WorkflowGraphPreview graph={analysis.workflow_graph} /> : null}
+      {analysis.workflow_run?.tasks?.length ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {analysis.workflow_run.tasks.map((task) => (
+            <div className="rounded-md border border-line bg-slate-50 px-3 py-2 text-xs leading-5" key={task.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-900">{task.id.replace(/_/g, " ")}</span>
+                <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-semibold text-slate-600">
+                  {task.model_tier}
+                </span>
+              </div>
+              <p className="mt-1 text-slate-600">{task.description}</p>
+              {task.dependencies.length ? (
+                <p className="mt-1 text-slate-500">Depends on {task.dependencies.map((value) => value.replace(/_/g, " ")).join(", ")}</p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {analysis.workflow_run?.trace_events.length ? <WorkflowTraceTimeline events={analysis.workflow_run.trace_events} /> : null}
     </section>
   );
 }

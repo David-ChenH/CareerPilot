@@ -135,6 +135,8 @@ export type JobAnalysisResponse = {
   saved_job?: JobRecord | null;
   resume_emphasis: string[];
   prep_topics: string[];
+  workflow_graph?: WorkflowGraph | null;
+  workflow_run?: WorkflowRunArtifact | null;
 };
 
 export type JobDetail = {
@@ -304,11 +306,27 @@ export type WorkflowTraceEvent = {
   detail?: string | null;
 };
 
+export type WorkflowRunTask = {
+  id: string;
+  tool: string;
+  description: string;
+  dependencies: string[];
+  status: string;
+  model_tier: string;
+  retry_count: number;
+  cache_key?: string | null;
+  estimated_cost_usd: number;
+  latency_ms?: number | null;
+  error_type?: string | null;
+  requires_approval: boolean;
+};
+
 export type WorkflowRunArtifact = {
   id: string;
   workflow_id: string;
   workflow_version: number;
   status: string;
+  tasks?: WorkflowRunTask[];
   trace_events: WorkflowTraceEvent[];
 };
 

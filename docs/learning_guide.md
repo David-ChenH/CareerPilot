@@ -306,6 +306,25 @@ When to add more agentic behavior:
 
 For this app, web research and interview prep are better candidates for agentic loops than application status tracking.
 
+The job-analysis path has now been made explicit as a DAG:
+
+```text
+load_profile + prepare_input
+  -> parse_job
+  -> score_fit
+  -> validate_fit
+  -> generate_guidance
+```
+
+This is not LangGraph yet. It is a small internal executor that teaches the same platform concepts: approved tools, dependencies, dependency outputs, task status, and trace events. That matters because "agentic" production systems are rarely just one prompt. They are workflows where model calls, deterministic tools, validators, and user-facing artifacts have clear boundaries.
+
+The useful interview framing is:
+
+- The LLM performs semantic interpretation.
+- The application layer owns task boundaries and durable contracts.
+- The executor owns dependency order and traceability.
+- The UI can show the workflow without knowing Python internals.
+
 ### 2. Thin API, thick application layer
 
 FastAPI routes should not contain business logic. They should call application services such as the coordinator.

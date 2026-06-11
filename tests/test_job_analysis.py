@@ -194,8 +194,78 @@ def test_analyze_high_fit_ai_platform_job(tmp_path: Path) -> None:
     assert response.guidance_warning is None
     assert response.guidance.prep_plan == []
     assert "python" in response.parsed_job.skills
+    assert response.workflow_graph is not None
+    assert response.workflow_graph.workflow_id == "job_analysis"
+    assert [node.id for node in response.workflow_graph.nodes] == [
+        "load_profile",
+        "prepare_input",
+        "parse_job",
+        "score_fit",
+        "validate_fit",
+        "generate_guidance",
+    ]
+    assert response.workflow_run is not None
+    assert response.workflow_run.outputs == {}
+    assert response.workflow_run.status == "completed"
+    assert [event.event for event in response.workflow_run.trace_events if event.task_id == "validate_fit"] == [
+        "started",
+        "completed",
+    ]
     assert response.saved_job is not None
     assert response.saved_job.source_url == "https://example.com/jobs/ai-platform-backend"
+
+
+def test_analysis_workflow_records_validation_repair_trace(tmp_path: Path, monkeypatch) -> None:
+    calls = {"validate": 0}
+    repair_required = AnalysisValidationReport(
+        status="repair_required",
+        summary="Needs repair.",
+        issues=[
+            AnalysisValidationIssue(
+                type="unsupported_gap",
+                severity="high",
+                field="fit.gaps",
+                claim="Unsupported C++ gap.",
+                repair_instruction="Remove unsupported gap.",
+            )
+        ],
+    )
+
+    def validate(profile, job, fit):
+        del profile, job, fit
+        calls["validate"] += 1
+        return repair_required if calls["validate"] == 1 else AnalysisValidationReport(status="pass", summary="Valid.")
+
+    def repair(profile, job, fit, validation_report):
+        del profile, job, validation_report
+        return fit.model_copy(update={"gaps": [], "summary": "Repaired fit."})
+
+    monkeypatch.setattr("app.agents.coordinator.validate_fit_with_llm", validate)
+    monkeypatch.setattr("app.agents.coordinator.repair_fit_with_llm", repair)
+
+    coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+
+    response = coordinator.analyze(
+        JobAnalysisRequest(
+            description="Senior Backend Engineer\nCompany: Example AI\nBuild Java backend services.",
+            save=False,
+            use_llm=False,
+            use_llm_guidance=False,
+        )
+    )
+
+    assert response.fit.summary == "Repaired fit."
+    assert response.validation_used == "llm_repaired"
+    assert response.workflow_run is not None
+    assert response.workflow_run.tasks[4].id == "validate_fit"
+    assert response.workflow_run.tasks[4].status == "completed"
+    assert [event.event for event in response.workflow_run.trace_events if event.task_id == "validate_fit"] == [
+        "started",
+        "completed",
+    ]
 
 
 def test_profile_store_applies_updates_and_writes_audit(tmp_path: Path) -> None:

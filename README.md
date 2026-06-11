@@ -111,6 +111,33 @@ This keeps the frontend focused on presentation while the backend owns workflow 
 
 ## Quick Start
 
+### Short path
+
+CareerPilot includes a small helper script for the commands used most often:
+
+```bash
+scripts/careerpilot setup
+scripts/careerpilot dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```
+
+Useful follow-up commands:
+
+```bash
+scripts/careerpilot check
+scripts/careerpilot test
+scripts/careerpilot backend
+scripts/careerpilot frontend
+scripts/careerpilot eval
+```
+
+Run `scripts/careerpilot help` to see all supported commands.
+
 ### 1. Clone and create a Python environment
 
 ```bash
@@ -283,35 +310,42 @@ evals/
 
 ## Development Commands
 
+The preferred local helper is:
+
+```bash
+scripts/careerpilot check
+```
+
+It runs tests, Python compilation, frontend build, and whitespace diff checks.
+
 Run backend tests:
 
 ```bash
-pytest
+scripts/careerpilot test
 ```
 
 Run Python compilation check:
 
 ```bash
-python -m compileall app
+.venv/bin/python -m compileall app
 ```
 
 Run frontend production build:
 
 ```bash
-cd frontend
-npm run build
+scripts/careerpilot build
 ```
 
 Run job-analysis evals:
 
 ```bash
-careerpilot-eval
+scripts/careerpilot eval
 ```
 
 Run evals with LLM parsing/scoring/guidance:
 
 ```bash
-careerpilot-eval --llm --json
+scripts/careerpilot eval-llm
 ```
 
 ## Learning And Interview Value

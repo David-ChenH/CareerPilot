@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+
+usage() {
+  cat <<'EOF'
+CareerPilot helper
+
+Usage:
+  scripts/careerpilot <command>
+
+Commands:
+  setup          Create .venv and install backend, browser, AI, and frontend dependencies
+  backend        Run FastAPI on http://127.0.0.1:8000
+  frontend       Run Vite on http://127.0.0.1:5173
+  dev            Run backend and frontend together
+  test           Run Python tests
+  build          Build the React frontend
+  check          Run pytest, Python compile check, frontend build, and git diff whitespace check
+  eval           Run deterministic job-analysis evals
+  eval-llm       Run LLM job-analysis evals as JSON
+  playwright     Install Playwright Chromium browser
+
+Examples:
+  scripts/careerpilot setup
+  scripts/careerpilot dev
+  scripts/careerpilot check
+EOF
+}
+
+ensure_venv() {
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "Python virtualenv not found. Run: scripts/careerpilot setup" >&2
+    exit 1
+  fi
+}
+
+create_venv_if_missing() {
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    python -m venv "$ROOT_DIR/.venv"
+  fi
+}
+
+cleanup_jobs() {
+  local pid
+  for pid in $(jobs -p); do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+
+cmd="${1:-help}"
+
+case "$cmd" in
+  setup)
+    create_venv_if_missing
+    "$PYTHON_BIN" -m pip install --upgrade pip
+    "$PYTHON_BIN" -m pip install -e "$ROOT_DIR[dev,browser,ai]"
+    (cd "$ROOT_DIR/frontend" && npm install)
+    echo "Setup complete."
+    echo "Optional: scripts/careerpilot playwright"
+    echo "Optional: cp .env.example .env and set OPENAI_API_KEY."
+    ;;
+
+  backend)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$PYTHON_BIN" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+    ;;
+
+  frontend)
+    cd "$ROOT_DIR/frontend"
+    npm run dev
+    ;;
+
+  dev)
+    ensure_venv
+    trap cleanup_jobs EXIT INT TERM
+    cd "$ROOT_DIR"
+    "$PYTHON_BIN" -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 &
+    (cd "$ROOT_DIR/frontend" && npm run dev) &
+    echo "Backend:  http://127.0.0.1:8000"
+    echo "Frontend: http://127.0.0.1:5173"
+    wait
+    ;;
+
+  test)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$PYTHON_BIN" -m pytest
+    ;;
+
+  build)
+    cd "$ROOT_DIR/frontend"
+    npm run build
+    ;;
+
+  check)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$PYTHON_BIN" -m pytest
+    "$PYTHON_BIN" -m compileall app
+    (cd "$ROOT_DIR/frontend" && npm run build)
+    git diff --check
+    ;;
+
+  eval)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$ROOT_DIR/.venv/bin/careerpilot-eval"
+    ;;
+
+  eval-llm)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$ROOT_DIR/.venv/bin/careerpilot-eval" --llm --json
+    ;;
+
+  playwright)
+    ensure_venv
+    cd "$ROOT_DIR"
+    "$PYTHON_BIN" -m playwright install chromium
+    ;;
+
+  help|--help|-h)
+    usage
+    ;;
+
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo >&2
+    usage >&2
+    exit 1
+    ;;
+esac
