@@ -159,7 +159,7 @@ This maps naturally to AWS Step Functions:
 | Execution history | Future workflow trace | Checkpoints and trace |
 | Callback approval | Future paused run | Interrupt |
 
-The DAG contract should survive a LangGraph migration. CareerPilot now has a `WorkflowRuntime` boundary: the native runtime wraps the local executor, and the LangGraph runtime can run the same approved workflow when the dependency is installed. LangGraph should become the main runtime for checkpointing, pause/resume, interrupts, conditional branches, and retry loops, while CareerPilot keeps ownership of domain definitions, cache identity, cost policy, evals, and approval rules.
+The DAG contract should survive a LangGraph migration. CareerPilot now has a `WorkflowRuntime` boundary: the native runtime wraps the local executor, and the prep-plan workflow selects the LangGraph runtime when the dependency is installed. If LangGraph is unavailable, it falls back to native execution and records the runtime warning in the workflow artifact. LangGraph should become the main runtime for checkpointing, pause/resume, interrupts, conditional branches, and retry loops, while CareerPilot keeps ownership of domain definitions, cache identity, cost policy, evals, and approval rules.
 
 ## Current architecture
 

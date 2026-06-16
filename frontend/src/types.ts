@@ -351,6 +351,10 @@ export type WorkflowRunArtifact = {
   status: string;
   tasks?: WorkflowRunTask[];
   trace_events: WorkflowTraceEvent[];
+  runtime?: {
+    name: string;
+    warning?: string | null;
+  };
 };
 
 export type AgentTask = {

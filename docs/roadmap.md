@@ -16,7 +16,7 @@ The target portfolio story is:
 | Chat | In progress | Global and job-scoped chat, local history, optional web search mode, LLM planner contracts for chat-invoked actions. |
 | Profile and resume portal | Complete foundation | Resume upload/paste proposals, explicit profile save flow, audit records. |
 | Prep plans and resume drafts | In progress | Prep plans now run through the workflow executor with trace/evaluation artifacts; resume generation remains direct. |
-| Workflow runtime | In progress | Minimal DAG executor remains the native baseline; prep-plan workflows can run through a LangGraph runtime boundary when LangGraph is installed. |
+| Workflow runtime | In progress | Minimal DAG executor remains the native baseline; prep-plan workflows now prefer LangGraph when installed and record runtime metadata. |
 | Evaluation | In progress | Job-analysis eval harness exists; broader eval cases and artifact evals are next. |
 | Target-company discovery | Deferred | Keep scan/cron features until single-job quality and workflow runtime are stronger. |
 
@@ -29,7 +29,7 @@ The target portfolio story is:
 
 2. Move LangGraph into one real workflow early.
    - Keep the native executor as a learning baseline and fallback.
-   - Use the `WorkflowRuntime` boundary so prep planning can run on either the native executor or LangGraph.
+   - Use the `WorkflowRuntime` boundary so prep planning runs on LangGraph when installed and native otherwise.
    - Make LangGraph the intended primary runtime for stateful orchestration once it cleanly supports pause/resume, approvals, retries, and traceable graph state.
 
 3. Expand analysis-quality evaluation.

@@ -9,7 +9,7 @@ from app.tools.prep_planner import generate_prep_plan, generate_prep_plan_with_l
 from app.workflows import ModelTier, WorkflowDefinition, WorkflowTask, WorkflowToolRegistry
 from app.workflows.graph import workflow_graph_from_run
 from app.workflows.models import WorkflowRun
-from app.workflows.runtime import NativeWorkflowRuntime, WorkflowRuntime
+from app.workflows.runtime import LangGraphRuntimeUnavailable, NativeWorkflowRuntime, WorkflowRuntime, select_workflow_runtime
 
 
 class PrepPlanWorkflowRequest(BaseModel):
@@ -130,7 +130,11 @@ class PrepPlanWorkflowRunner:
         self.profile = profile
         self.jobs = jobs
         self.coding_problems = coding_problems
-        self.runtime = runtime or NativeWorkflowRuntime()
+        runtime_selection = select_workflow_runtime() if runtime is None else None
+        self.runtime = runtime or runtime_selection.runtime
+        self.runtime_name = getattr(self.runtime, "name", self.runtime.__class__.__name__)
+        self.runtime_warning = runtime_selection.warning if runtime_selection else None
+        self.allow_runtime_fallback = runtime is None
 
     def run(self, request: PrepPlanWorkflowRequest) -> PrepPlan:
         workflow = build_prep_plan_workflow(request)
@@ -146,12 +150,26 @@ class PrepPlanWorkflowRunner:
         registry.register("evaluate_prep_plan", self._evaluate_prep_plan)
         registry.register("aggregate_plan", self._aggregate_plan)
 
-        run = self.runtime.execute(workflow, registry)
+        try:
+            run = self.runtime.execute(workflow, registry)
+        except LangGraphRuntimeUnavailable as error:
+            if not self.allow_runtime_fallback:
+                raise
+            self.runtime = NativeWorkflowRuntime()
+            self.runtime_name = self.runtime.name
+            self.runtime_warning = str(error)
+            run = self.runtime.execute(workflow, registry)
         if "aggregate_plan" not in run.outputs:
             raise RuntimeError(_workflow_error(run))
         plan: PrepPlan = run.outputs["aggregate_plan"]["plan"]
         plan.workflow_graph = workflow_graph_from_run(run).model_dump(mode="json")
-        plan.workflow_run = run.model_dump(exclude={"outputs"}, mode="json")
+        plan.workflow_run = {
+            **run.model_dump(exclude={"outputs"}, mode="json"),
+            "runtime": {
+                "name": self.runtime_name,
+                "warning": self.runtime_warning,
+            },
+        }
         plan.evaluation = run.outputs.get("evaluate_prep_plan")
         return plan
 

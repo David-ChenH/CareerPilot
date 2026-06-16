@@ -166,13 +166,18 @@ LangGraph should become the primary runtime for stateful orchestration, but it s
 | trace event | checkpoint/trace |
 | approval pause | interrupt |
 
-CareerPilot now exposes a `WorkflowRuntime` boundary. The native runtime wraps the current in-process DAG executor. The LangGraph runtime can execute the same approved workflow template when LangGraph is installed, which lets the project compare behavior without rewriting product code.
+CareerPilot now exposes a `WorkflowRuntime` boundary. The native runtime wraps the current in-process DAG executor. Prep-plan generation selects the LangGraph runtime when LangGraph is installed through the `ai` extra, otherwise it falls back to the native runtime and records the fallback warning in the workflow artifact. This lets the app start using LangGraph as the orchestration backend without rewriting product code.
+
+Each prep-plan workflow artifact records:
+
+- `workflow_run.runtime.name`: `langgraph` or `native`
+- `workflow_run.runtime.warning`: fallback reason when the native runtime was used because LangGraph was unavailable
 
 Recommended transition sequence:
 
 1. Use the LLM assistant planner for open-ended chat intent.
 2. Run the prep-plan workflow through the `WorkflowRuntime` boundary.
-3. Use LangGraph as the primary runtime for one workflow once the dependency is installed.
+3. Use LangGraph as the primary runtime for prep-plan generation once the dependency is installed.
 4. Add approval pause/resume with LangGraph interrupts.
 5. Add retries, model routing, cache keys, and cost accounting behind the runtime boundary.
 6. Persist workflow runs/checkpoints in queryable tables after the API contract stabilizes.

@@ -14,11 +14,14 @@ from app.workflows import (
     WorkflowExecutionError,
     WorkflowExecutor,
     WorkflowGraphError,
+    LangGraphRuntimeUnavailable,
     LangGraphWorkflowRuntime,
     NativeWorkflowRuntime,
     WorkflowRun,
+    WorkflowRuntimeSelection,
     WorkflowTask,
     WorkflowToolRegistry,
+    select_workflow_runtime,
     topological_groups,
     topological_order,
     validate_workflow,
@@ -59,6 +62,13 @@ class _FakeCompiledGraph:
             state = self.nodes[current](state)
             current = self.edges[current]
         return state
+
+
+class _UnavailableRuntime:
+    name = "langgraph"
+
+    def execute(self, *_args, **_kwargs):
+        raise LangGraphRuntimeUnavailable("LangGraph runtime failed to initialize.")
 
 
 def _prep_workflow() -> WorkflowDefinition:
@@ -294,6 +304,38 @@ def test_langgraph_runtime_runs_approved_workflow_with_same_outputs(monkeypatch)
     assert [event.event for event in run.trace_events] == ["started", "completed", "started", "completed"]
 
 
+def test_runtime_selector_prefers_langgraph_when_available(monkeypatch) -> None:
+    fake_langgraph = ModuleType("langgraph")
+    fake_graph = ModuleType("langgraph.graph")
+    monkeypatch.setitem(sys.modules, "langgraph", fake_langgraph)
+    monkeypatch.setitem(sys.modules, "langgraph.graph", fake_graph)
+
+    selection = select_workflow_runtime()
+
+    assert selection.name == "langgraph"
+    assert isinstance(selection.runtime, LangGraphWorkflowRuntime)
+    assert selection.warning is None
+
+
+def test_runtime_selector_falls_back_to_native_when_langgraph_missing(monkeypatch) -> None:
+    monkeypatch.delitem(sys.modules, "langgraph", raising=False)
+    monkeypatch.delitem(sys.modules, "langgraph.graph", raising=False)
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "langgraph.graph":
+            raise ImportError("missing langgraph")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    selection = select_workflow_runtime()
+
+    assert selection.name == "native"
+    assert isinstance(selection.runtime, NativeWorkflowRuntime)
+    assert selection.warning == "LangGraph is not installed; used native workflow runtime."
+
+
 def test_executor_blocks_transitive_dependents_and_continues_independent_branch() -> None:
     registry = WorkflowToolRegistry()
     registry.register("fail", lambda _input, _dependencies: (_ for _ in ()).throw(RuntimeError("broken")))
@@ -377,6 +419,7 @@ def test_prep_plan_workflow_generates_traceable_plan() -> None:
                 tags=["array"],
             )
         ],
+        runtime=NativeWorkflowRuntime(),
     ).run(
         PrepPlanWorkflowRequest(
             timeline_days=3,
@@ -392,6 +435,8 @@ def test_prep_plan_workflow_generates_traceable_plan() -> None:
     assert plan.workflow_graph["workflow_id"] == "prep_plan_generation"
     assert plan.workflow_run is not None
     assert plan.workflow_run["status"] == "completed"
+    assert plan.workflow_run["runtime"]["name"] == "native"
+    assert plan.workflow_run["runtime"]["warning"] is None
     assert plan.evaluation is not None
     assert plan.evaluation["status"] == "pass"
 
@@ -424,6 +469,33 @@ def test_prep_plan_workflow_can_run_through_langgraph_runtime(monkeypatch) -> No
     assert plan.workflow_run is not None
     assert plan.workflow_run["workflow_id"] == "prep_plan_generation"
     assert plan.workflow_run["status"] == "completed"
+    assert plan.workflow_run["runtime"]["name"] == "langgraph"
+    assert plan.workflow_run["runtime"]["warning"] is None
+
+
+def test_prep_plan_default_runtime_falls_back_when_langgraph_execution_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.workflows.prep_plan.select_workflow_runtime",
+        lambda: WorkflowRuntimeSelection(runtime=_UnavailableRuntime(), name="langgraph"),
+    )
+
+    plan = PrepPlanWorkflowRunner(
+        profile=ProfileStore().load_model(),
+        jobs=[],
+        coding_problems=[],
+    ).run(
+        PrepPlanWorkflowRequest(
+            timeline_days=1,
+            hours_per_day=1,
+            focus="workflow orchestration",
+            use_llm=False,
+        )
+    )
+
+    assert plan.workflow_run is not None
+    assert plan.workflow_run["status"] == "completed"
+    assert plan.workflow_run["runtime"]["name"] == "native"
+    assert plan.workflow_run["runtime"]["warning"] == "LangGraph runtime failed to initialize."
 
 
 def test_job_ingestion_runner_syncs_executor_trace_to_agent_task(tmp_path: Path, monkeypatch) -> None:

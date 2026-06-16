@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict
 from uuid import uuid4
 
@@ -10,6 +11,8 @@ from app.workflows.trace import WorkflowTraceEvent, trace_event
 
 
 class WorkflowRuntime(Protocol):
+    name: str
+
     def execute(
         self,
         workflow: WorkflowDefinition,
@@ -21,6 +24,8 @@ class WorkflowRuntime(Protocol):
 
 class NativeWorkflowRuntime:
     """Current in-process CareerPilot runtime used as the learning baseline."""
+
+    name = "native"
 
     def execute(
         self,
@@ -47,6 +52,8 @@ class LangGraphWorkflowRuntime:
     the domain workflow, tools, trace events, and final artifacts stay the same
     while scheduling can move behind LangGraph.
     """
+
+    name = "langgraph"
 
     def execute(
         self,
@@ -83,6 +90,28 @@ class LangGraphWorkflowRuntime:
             else WorkflowRunStatus.COMPLETED
         )
         return final_run
+
+
+@dataclass(frozen=True)
+class WorkflowRuntimeSelection:
+    runtime: WorkflowRuntime
+    name: str
+    warning: str | None = None
+
+
+def select_workflow_runtime(prefer_langgraph: bool = True) -> WorkflowRuntimeSelection:
+    if prefer_langgraph:
+        try:
+            import langgraph.graph  # noqa: F401
+        except ImportError:
+            return WorkflowRuntimeSelection(
+                runtime=NativeWorkflowRuntime(),
+                name=NativeWorkflowRuntime.name,
+                warning="LangGraph is not installed; used native workflow runtime.",
+            )
+        return WorkflowRuntimeSelection(runtime=LangGraphWorkflowRuntime(), name=LangGraphWorkflowRuntime.name)
+
+    return WorkflowRuntimeSelection(runtime=NativeWorkflowRuntime(), name=NativeWorkflowRuntime.name)
 
 
 def _group_runner(

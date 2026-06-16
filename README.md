@@ -382,7 +382,7 @@ Near-term:
 
 - richer prep-plan workflow DAG with parallel branches
 - richer assistant action confirmation UI
-- LangGraph-backed prep-plan workflow execution
+- LangGraph-backed prep-plan runtime hardening: checkpointing, approval interrupts, and retries
 - model routing and cost tracking
 - cache keys for reusable intermediate outputs
 - persistent workflow traces
