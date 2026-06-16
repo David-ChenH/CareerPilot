@@ -1,39 +1,39 @@
 # CareerPilot
 
-CareerPilot is a local-first AI career workbench for job analysis, application tracking, resume targeting, preparation planning, and agentic workflow experimentation.
+CareerPilot is a local-first AI career workbench for analyzing jobs, tracking applications, tailoring resumes, and building interview preparation plans.
 
-The project is designed as both a useful personal job-search tool and a production-style learning project for backend engineers exploring AI platform and agent workflow infrastructure.
+It is designed for people who want a private, hackable career assistant they can run on their own machine. You bring your profile, resume, target roles, and job links; CareerPilot helps turn that context into structured analysis, saved applications, prep plans, and resume drafts.
 
-## Why This Project Exists
-
-Many AI job-search demos are thin chatbots over a resume and a job description. CareerPilot takes a more backend/platform-oriented approach:
-
-- job links are fetched and extracted through bounded tools
-- profile memory is stored locally and explicitly updated
-- LLM outputs are represented with typed schemas
-- background operations run through an observable workflow DAG
-- generated artifacts carry provenance and versions
-- chat can trigger approved actions without executing arbitrary code
-
-The goal is to demonstrate how agentic applications can be built with controlled execution, traceability, evaluation hooks, and clear privacy boundaries.
-
-## Features
+## What You Can Do
 
 - Analyze pasted job descriptions or individual job links.
 - Fetch JavaScript-rendered career pages with Playwright when needed.
-- Combine JSON-LD metadata, rendered page structure, and LLM semantic analysis.
-- Score role fit against a local user profile and career goals.
-- Identify strengths, skill gaps, concerns, resume emphasis, and prep topics.
+- Score role fit against your local profile, career goals, and preferences.
+- Identify strengths, gaps, concerns, resume emphasis, and prep topics.
 - Save jobs into a local SQLite application tracker.
 - Regenerate saved analysis while preserving application status and analysis history.
-- Refresh saved-job analysis through a review-first flow before applying updates.
-- Chat globally across profile, saved jobs, and local history.
-- Chat about a specific saved job or analysis preview.
-- Enable optional OpenAI web search for current company/interview context.
+- Chat globally across your profile, saved jobs, and local chat history.
+- Chat about a specific saved job or an unsaved analysis preview.
+- Enable optional OpenAI web search for current company or interview context.
 - Generate interview prep plans with daily checklist items.
 - Generate role-targeted resume PDF drafts.
 - Upload or paste resume text and review proposed profile updates.
 - Track background job ingestion through workflow graph and trace events.
+
+## Who It Is For
+
+- Job seekers who want a private workspace for comparing roles and preparing intentionally.
+- Engineers who want to inspect or extend a real AI-assisted career workflow.
+- Developers learning how to build agentic applications with controlled tools, typed outputs, traces, and local persistence.
+
+## Design Principles
+
+- **Local-first privacy**: your private profile, job database, chat history, generated resumes, and API keys stay out of Git.
+- **Review before mutation**: profile updates, saved analysis refreshes, and generated artifacts are explicit and auditable.
+- **Structured AI output**: LLM calls produce typed artifacts instead of untracked free-form blobs.
+- **Bounded tools**: assistant-planned actions must pass backend allow-list and approval checks.
+- **Observable workflows**: long-running operations expose graph and trace artifacts for debugging.
+- **Framework-neutral contracts**: CareerPilot owns the product contracts while LangGraph can run selected workflows behind a runtime boundary.
 
 ## Architecture Highlights
 
@@ -61,7 +61,7 @@ flowchart LR
 Important backend concepts:
 
 - **FastAPI backend**: local API surface for analysis, chat, prep plans, resumes, and tracking.
-- **React frontend**: demo workbench for reviewing jobs, chats, plans, profile memory, and workflow status.
+- **React frontend**: workbench for reviewing jobs, chats, plans, profile memory, and workflow status.
 - **Local profile memory**: user background and preferences live in an ignored YAML file.
 - **SQLite persistence**: saved jobs, chat history, prep plans, resume versions, profile proposals, and background tasks.
 - **Typed LLM contracts**: Pydantic models define structured parser, scoring, guidance, and artifact outputs.
@@ -349,9 +349,9 @@ Run evals with LLM parsing/scoring/guidance:
 scripts/careerpilot eval-llm
 ```
 
-## Learning And Interview Value
+## For Developers
 
-CareerPilot is intentionally shaped around backend and AI platform concerns:
+CareerPilot is also a reference project for building production-style AI applications. The implementation emphasizes:
 
 - controlled tool execution instead of arbitrary model actions
 - typed workflow templates instead of unbounded autonomy
@@ -363,9 +363,9 @@ CareerPilot is intentionally shaped around backend and AI platform concerns:
 - local evaluation fixtures for regression testing
 - privacy boundaries around profile, application history, and secrets
 
-A concise interview explanation:
+A concise architecture summary:
 
-> CareerPilot started as a local AI job-search workbench, but I designed it as an agent workflow platform exercise. The app separates prompts, tools, workflow templates, and persistence. Chat intent is interpreted by an LLM planner, while the backend validates allow-listed actions and approval rules. Workflows run through typed DAG contracts with trace artifacts, and LangGraph can sit behind the same runtime boundary for stateful orchestration. This lets me discuss production agent concerns such as observability, evaluation, memory, cost control, retries, human approval, and framework integration from a concrete codebase.
+> CareerPilot is a local AI career workbench with production-style agent workflow foundations. The app separates prompts, tools, workflow templates, and persistence. Chat intent is interpreted by an LLM planner, while the backend validates allow-listed actions and approval rules. Workflows run through typed DAG contracts with trace artifacts, and LangGraph can sit behind the same runtime boundary for stateful orchestration.
 
 ## Documentation
 
