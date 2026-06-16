@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.artifacts import (
     PROFILE_PROPOSAL_PROMPT_VERSION,
@@ -15,7 +15,16 @@ from app.artifacts import (
     artifact_provenance,
     configured_llm_model,
 )
-from app.agents.action_registry import ActionRegistry, AgentAction
+from app.agents.action_registry import ActionRegistry
+from app.agents.assistant_planner import (
+    ActionExecutionResult,
+    ActionExecutionStatus,
+    AssistantPlannedAction,
+    AssistantPlannerUnavailable,
+    AssistantPlan,
+    AssistantPlanStatus,
+    plan_assistant_actions_with_llm,
+)
 from app.agents.coordinator import (
     AnalysisChatRequest,
     AssistantChatRequest,
@@ -40,6 +49,8 @@ from app.db.models import (
     JobChatMessage,
     JobDetail,
     JobRecord,
+    LeetCodeProblem,
+    LeetCodeStatus,
     PrepPlan,
     ProfileProposal,
     ResumeVersion,
@@ -54,12 +65,13 @@ from app.tools.profile_proposal_refiner import (
     refine_profile_proposal_deterministically,
     refine_profile_proposal_with_llm,
 )
-from app.tools.prep_planner import generate_prep_plan, generate_prep_plan_with_llm, parse_prep_plan_text
+from app.tools.prep_planner import parse_prep_plan_text
 from app.tools.resume_generator import generate_resume_artifact
 from app.tools.llm_job_chat import DEFAULT_LLM_MODEL
 from app.tools.analysis_feedback import record_analysis_feedback
 from app.tools.text_budget import compact_job_text
 from app.workflows.job_ingestion import JobIngestionWorkflowRunner
+from app.workflows.prep_plan import PrepPlanWorkflowRequest, PrepPlanWorkflowRunner
 
 
 load_local_env()
@@ -134,9 +146,9 @@ def clear_global_chat(session_id: int | None = None) -> None:
 def chat_globally(request: GlobalChatRequest, background_tasks: BackgroundTasks) -> GlobalChatResponse:
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Chat message cannot be empty.")
-    action = action_registry.detect_from_message(request.message)
-    if action and action_registry.is_allowed(action.name):
-        return _run_chat_action(request, action, background_tasks)
+    planned_response = _maybe_run_planned_chat_actions(request, background_tasks)
+    if planned_response is not None:
+        return planned_response
     return coordinator.chat_globally(request)
 
 
@@ -363,6 +375,15 @@ class PrepTaskUpdateRequest(BaseModel):
     completed: bool
 
 
+class LeetCodeProblemRequest(BaseModel):
+    title: str
+    url: str
+    category: str
+    tags: list[str] = Field(default_factory=list)
+    note: str | None = None
+    status: LeetCodeStatus = LeetCodeStatus.TODO
+
+
 class ResumeGenerateRequest(BaseModel):
     role_title: str
     company: str | None = None
@@ -452,36 +473,22 @@ def list_prep_plan_versions(plan_id: int) -> list[dict]:
 
 @app.post("/prep-plans/generate", response_model=PrepPlan)
 def generate_preparation_plan(request: PrepPlanGenerateRequest) -> PrepPlan:
-    profile = coordinator.profile_store.load()
+    profile = coordinator.profile_store.load_model()
     jobs = coordinator.repository.list_jobs()
-    if request.use_llm:
-        try:
-            plan = generate_prep_plan_with_llm(
-                profile=profile,
-                jobs=jobs,
-                timeline_days=request.timeline_days,
-                hours_per_day=request.hours_per_day,
-                focus=request.focus,
-                job_id=request.job_id,
-            )
-        except Exception:
-            plan = generate_prep_plan(
-                profile=profile,
-                jobs=jobs,
-                timeline_days=request.timeline_days,
-                hours_per_day=request.hours_per_day,
-                focus=request.focus,
-                job_id=request.job_id,
-            )
-    else:
-        plan = generate_prep_plan(
-            profile=profile,
-            jobs=jobs,
+    coding_problems = coordinator.repository.list_leetcode_problems()
+    plan = PrepPlanWorkflowRunner(
+        profile=profile,
+        jobs=jobs,
+        coding_problems=coding_problems,
+    ).run(
+        PrepPlanWorkflowRequest(
             timeline_days=request.timeline_days,
             hours_per_day=request.hours_per_day,
             focus=request.focus,
             job_id=request.job_id,
+            use_llm=request.use_llm,
         )
+    )
     return coordinator.repository.save_prep_plan(plan)
 
 
@@ -500,6 +507,31 @@ def update_preparation_task(plan_id: int, day: int, task_index: int, request: Pr
     return plan
 
 
+@app.get("/leetcode/problems", response_model=list[LeetCodeProblem])
+def list_leetcode_problems() -> list[LeetCodeProblem]:
+    return coordinator.repository.list_leetcode_problems()
+
+
+@app.post("/leetcode/problems", response_model=LeetCodeProblem)
+def create_leetcode_problem(request: LeetCodeProblemRequest) -> LeetCodeProblem:
+    return coordinator.repository.create_leetcode_problem(_leetcode_problem_from_request(request))
+
+
+@app.put("/leetcode/problems/{problem_id}", response_model=LeetCodeProblem)
+def update_leetcode_problem(problem_id: int, request: LeetCodeProblemRequest) -> LeetCodeProblem:
+    updated = coordinator.repository.update_leetcode_problem(problem_id, _leetcode_problem_from_request(request))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="LeetCode problem not found.")
+    return updated
+
+
+@app.delete("/leetcode/problems/{problem_id}", status_code=204)
+def delete_leetcode_problem(problem_id: int) -> None:
+    deleted = coordinator.repository.delete_leetcode_problem(problem_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="LeetCode problem not found.")
+
+
 @app.post("/resumes/generate")
 def generate_resume(request: ResumeGenerateRequest) -> Response:
     if not request.role_title.strip():
@@ -509,7 +541,7 @@ def generate_resume(request: ResumeGenerateRequest) -> Response:
         raise HTTPException(status_code=404, detail="Job not found.")
     job = detail.job if detail else None
     artifact = generate_resume_artifact(
-        profile=coordinator.profile_store.load(),
+        profile=coordinator.profile_store.load_model(),
         role_title=request.role_title,
         company=request.company,
         job=job,
@@ -549,6 +581,27 @@ def download_resume_version(resume_id: int) -> Response:
     if pdf is None:
         raise HTTPException(status_code=404, detail="Resume version not found.")
     return Response(content=pdf, media_type="application/pdf")
+
+
+def _leetcode_problem_from_request(request: LeetCodeProblemRequest) -> LeetCodeProblem:
+    title = request.title.strip()
+    url = request.url.strip()
+    category = request.category.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Problem title cannot be empty.")
+    if not url:
+        raise HTTPException(status_code=400, detail="Problem link cannot be empty.")
+    if not category:
+        raise HTTPException(status_code=400, detail="Problem category cannot be empty.")
+    tags = [tag.strip() for tag in request.tags if tag.strip()]
+    return LeetCodeProblem(
+        title=title,
+        url=url,
+        category=category,
+        tags=list(dict.fromkeys(tags)),
+        note=request.note.strip() if request.note and request.note.strip() else None,
+        status=request.status,
+    )
 
 
 @app.post("/jobs/analysis/chat", response_model=JobChatResponse)
@@ -695,18 +748,91 @@ def _stream_event(event_type: str, **payload) -> str:
     return json.dumps({"type": event_type, **payload}, default=str) + "\n"
 
 
-def _run_chat_action(
+def _maybe_run_planned_chat_actions(
     request: GlobalChatRequest,
-    action: AgentAction,
     background_tasks: BackgroundTasks,
-) -> GlobalChatResponse:
-    if action.name != "ingest_job_from_url":
-        raise HTTPException(status_code=400, detail=f"Unsupported assistant action: {action.name}.")
+) -> GlobalChatResponse | None:
+    if not request.use_llm:
+        return None
 
-    url = str(action.parameters.get("url") or "").strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="Detected job action did not include a URL.")
+    existing_session = _existing_chat_session(request)
+    messages = [
+        *(coordinator.repository.list_global_chat_messages(existing_session.id) if existing_session and existing_session.id else []),
+        GlobalChatMessage(
+            session_id=existing_session.id if existing_session else None,
+            role=ChatRole.USER,
+            content=request.message.strip(),
+        ),
+    ]
+    try:
+        plan = plan_assistant_actions_with_llm(
+            profile=coordinator.profile_store.load(),
+            jobs=coordinator.repository.list_jobs(),
+            messages=messages,
+            active_context={"type": "global_chat", "session_id": existing_session.id if existing_session else None},
+        )
+    except AssistantPlannerUnavailable:
+        return None
 
+    if plan.status == AssistantPlanStatus.ANSWER_ONLY and not plan.actions:
+        return None
+
+    if plan.status == AssistantPlanStatus.NEEDS_CLARIFICATION:
+        return _record_planned_chat_response(
+            request=request,
+            session=_resolve_chat_session(request),
+            answer=plan.clarification_question or "Can you clarify what you want CareerPilot to do?",
+            responder_used="planner:clarification",
+            assistant_plan=plan,
+        )
+
+    if plan.status == AssistantPlanStatus.REJECTED:
+        return _record_planned_chat_response(
+            request=request,
+            session=_resolve_chat_session(request),
+            answer=plan.clarification_question or "I cannot safely perform that action from chat.",
+            responder_used="planner:rejected",
+            assistant_plan=plan,
+        )
+
+    if not plan.actions:
+        return None
+
+    validation_results = [
+        result
+        for result in (action_registry.validate_planned_action(action) for action in plan.actions)
+        if result is not None
+    ]
+    if validation_results:
+        return _record_planned_chat_response(
+            request=request,
+            session=_resolve_chat_session(request),
+            answer=_planned_action_response(plan, validation_results),
+            responder_used="planner:validation",
+            assistant_plan=plan,
+            action_results=validation_results,
+        )
+
+    tasks: list[AgentTask] = []
+    execution_results: list[ActionExecutionResult] = []
+    for action in plan.actions:
+        result, task = _execute_planned_action(action, request, background_tasks)
+        execution_results.append(result)
+        if task is not None:
+            tasks.append(task)
+
+    return _record_planned_chat_response(
+        request=request,
+        session=_resolve_chat_session(request),
+        answer=_planned_action_response(plan, execution_results),
+        responder_used="planner:executed",
+        assistant_plan=plan,
+        action_results=execution_results,
+        actions=tasks,
+    )
+
+
+def _resolve_chat_session(request: GlobalChatRequest) -> GlobalChatSession:
     session = (
         coordinator.repository.get_global_chat_session(request.session_id)
         if request.session_id is not None
@@ -714,29 +840,31 @@ def _run_chat_action(
     )
     if session is None:
         session = coordinator.repository.create_global_chat_session(_chat_title_from_message(request.message))
+    return session
 
+
+def _existing_chat_session(request: GlobalChatRequest) -> GlobalChatSession | None:
+    if request.session_id is None:
+        return None
+    return coordinator.repository.get_global_chat_session(request.session_id)
+
+
+def _record_planned_chat_response(
+    *,
+    request: GlobalChatRequest,
+    session: GlobalChatSession,
+    answer: str,
+    responder_used: str,
+    assistant_plan: AssistantPlan,
+    action_results: list[ActionExecutionResult] | None = None,
+    actions: list[AgentTask] | None = None,
+) -> GlobalChatResponse:
     user_message = coordinator.repository.add_global_chat_message(
         GlobalChatMessage(
             session_id=session.id,
             role=ChatRole.USER,
             content=request.message.strip(),
         )
-    )
-    save = bool(action.parameters.get("save"))
-    task_request = BackgroundJobIngestRequest(
-        url=url,
-        save=save,
-        use_browser_fallback=True,
-        use_llm=request.use_llm,
-        use_llm_guidance=True,
-    )
-    task = _start_job_ingest_task(task_request)
-    background_tasks.add_task(_run_background_job_ingest, task.id, task_request)
-
-    outcome = "analyze it and save it to the tracker" if save else "fetch and analyze it without saving yet"
-    answer = (
-        f"I found a job link and started a background workflow to {outcome}.\n\n"
-        f"Task `{task.id}` will fetch the page, run the job analysis, and update progress as each step completes."
     )
     assistant_message = coordinator.repository.add_global_chat_message(
         GlobalChatMessage(
@@ -749,11 +877,128 @@ def _run_chat_action(
         answer=answer,
         session=coordinator.repository.get_global_chat_session(session.id) or session,
         messages=[user_message, assistant_message],
-        responder_used=f"action:{action.name}",
+        responder_used=responder_used,
         used_web_search=False,
         citations=[],
-        actions=[task],
+        actions=actions or [],
+        assistant_plan=assistant_plan,
+        action_results=action_results or [],
     )
+
+
+def _execute_planned_action(
+    action: AssistantPlannedAction,
+    request: GlobalChatRequest,
+    background_tasks: BackgroundTasks,
+) -> tuple[ActionExecutionResult, AgentTask | None]:
+    if action.name == "ingest_job_from_url":
+        url = str(action.arguments.url or "").strip()
+        save = bool(action.arguments.save)
+        if not url:
+            return (
+                ActionExecutionResult(
+                    action_name=action.name,
+                    status=ActionExecutionStatus.REJECTED,
+                    summary="Rejected job ingestion: missing URL.",
+                ),
+                None,
+            )
+
+        task_request = BackgroundJobIngestRequest(
+            url=url,
+            save=save,
+            use_browser_fallback=True,
+            use_llm=request.use_llm,
+            use_llm_guidance=True,
+        )
+        task = _start_job_ingest_task(task_request)
+        background_tasks.add_task(_run_background_job_ingest, task.id, task_request)
+        return (
+            ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.EXECUTED,
+                summary=(
+                    "Started job ingestion and analysis."
+                    if save
+                    else "Started job ingestion and analysis preview."
+                ),
+                details={"task_id": task.id, "url": url, "save": save},
+            ),
+            task,
+        )
+
+    if action.name == "update_profile_memory":
+        normalized_updates = action.arguments.proposed_updates.to_updates()
+        if not any(normalized_updates.values()):
+            return (
+                ActionExecutionResult(
+                    action_name=action.name,
+                    status=ActionExecutionStatus.REJECTED,
+                    summary="Rejected profile update: no profile facts were provided.",
+                ),
+                None,
+            )
+        coordinator.profile_store.apply_updates(
+            normalized_updates,
+            source="assistant_planner",
+            metadata={"chat_session_id": request.session_id},
+        )
+        return (
+            ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.EXECUTED,
+                summary="Updated local profile memory.",
+                details={"updated_fields": sorted(normalized_updates)},
+            ),
+            None,
+        )
+
+    return (
+        ActionExecutionResult(
+            action_name=action.name,
+            status=ActionExecutionStatus.REJECTED,
+            summary=f"Unsupported assistant action: {action.name}.",
+        ),
+        None,
+    )
+
+
+def _planned_action_response(plan: AssistantPlan, results: list[ActionExecutionResult]) -> str:
+    if any(result.status == ActionExecutionStatus.NEEDS_CONFIRMATION for result in results):
+        lines = ["I can do that, but I need your confirmation before changing local data."]
+        for result in results:
+            lines.append(f"- {result.summary}")
+            arguments = result.details.get("arguments")
+            if arguments:
+                lines.append(f"  Proposed details: `{json.dumps(arguments, ensure_ascii=True)}`")
+        lines.append("Reply with a clear confirmation if you want me to proceed.")
+        return "\n".join(lines)
+
+    if any(result.status == ActionExecutionStatus.REJECTED for result in results):
+        lines = ["I could not safely run the requested action."]
+        lines.extend(f"- {result.summary}" for result in results)
+        return "\n".join(lines)
+
+    if any(result.status == ActionExecutionStatus.FAILED for result in results):
+        lines = ["I tried to run the planned action, but something failed."]
+        lines.extend(f"- {result.summary}" for result in results)
+        return "\n".join(lines)
+
+    executed = [result for result in results if result.status == ActionExecutionStatus.EXECUTED]
+    if executed:
+        lines = [plan.intent_summary.strip() or "I started the requested action."]
+        for result in executed:
+            detail = result.details
+            if result.action_name == "ingest_job_from_url" and detail.get("task_id"):
+                outcome = "analyze it and save it to the tracker" if detail.get("save") else "fetch and analyze it"
+                lines.append(
+                    f"- Started a background workflow to {outcome}: task `{detail['task_id']}`."
+                )
+            else:
+                lines.append(f"- {result.summary}")
+        return "\n".join(lines)
+
+    return plan.clarification_question or plan.intent_summary or "I reviewed the request."
 
 
 def _start_job_ingest_task(request: BackgroundJobIngestRequest) -> AgentTask:

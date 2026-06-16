@@ -86,42 +86,53 @@ Executor    -> runtime
 
 The next useful additions are:
 
-1. Parallel execution within ready groups.
-2. Cache keys for reusable outputs.
-3. Model routing by task complexity.
-4. Cost and latency accounting.
-5. Retry policy and escalation.
-6. Budget guardrails.
-7. Approval pauses.
-8. Persisted traces beyond current task artifacts.
-9. Evaluation hooks per generated artifact.
+1. Prep-plan workflow DAG with planner, analyzer, generator, evaluator, and aggregator nodes.
+2. Persisted trace, latency, and cost-placeholder artifacts for prep-plan runs.
+3. Parallel execution within ready groups.
+4. Cache keys for reusable outputs.
+5. Model routing by task complexity.
+6. Cost and latency accounting.
+7. Retry policy and escalation.
+8. Budget guardrails.
+9. Approval pauses.
+10. Persisted traces beyond current task artifacts.
+11. Evaluation hooks per generated artifact.
 
-## Prep-Plan DAG Target
+## Prep-Plan Agent Workflow
 
-The next richer workflow should be interview prep:
+Interview prep is now the richer workflow target. This is the strongest near-term learning milestone because it exercises agent workflow orchestration, shared state, evaluation, and traceability without requiring cloud deployment first.
 
 ```mermaid
 flowchart LR
-  job["analyze_job"]
-  profile["load_profile"]
-  gaps["identify_gaps"]
+  planner["plan_prep_workflow"]
+  profile["analyze_profile"]
+  job["analyze_target_job"]
+  codingState["analyze_coding_practice"]
+  gaps["identify_skill_gaps"]
   learning["generate_learning_plan"]
   coding["generate_coding_plan"]
   system["generate_system_design_plan"]
+  evaluate["evaluate_prep_plan"]
   aggregate["aggregate_plan"]
 
+  planner --> profile
+  planner --> job
+  planner --> codingState
   job --> gaps
   profile --> gaps
+  codingState --> coding
   gaps --> learning
   gaps --> coding
   gaps --> system
-  learning --> aggregate
-  coding --> aggregate
-  system --> aggregate
+  learning --> evaluate
+  coding --> evaluate
+  system --> evaluate
+  evaluate --> aggregate
 ```
 
 This demonstrates real platform concerns:
 
+- planner/evaluator/aggregator separation
 - independent branches
 - shared state
 - cache reuse
@@ -129,9 +140,22 @@ This demonstrates real platform concerns:
 - evaluation
 - human review
 
+The MVP persists:
+
+- final prep plan artifact
+- workflow graph and trace
+- per-task status
+- latency placeholder
+- cost placeholder
+- evaluation result
+
+This keeps the API and UI product-oriented while exposing the runtime details needed for interview discussion.
+
+The first implementation keeps generation compatible with the existing prep planner: the `aggregate_plan` node still calls the LLM or deterministic prep planner, while upstream nodes produce structured profile, job, coding-practice, gap, and branch-plan artifacts. Later stages can move more reasoning into specialized nodes without changing the workflow contract.
+
 ## LangGraph Transition
 
-LangGraph should not replace the domain model. It can replace or augment scheduling mechanics after CareerPilot has stable workflow contracts.
+LangGraph should become the primary runtime for stateful orchestration, but it should not replace the domain model. CareerPilot owns approved workflow templates, domain tools, artifact contracts, persistence, evals, cache identity, cost policy, and approval rules. LangGraph owns graph execution, checkpointing, pause/resume, interrupts, conditional routing, and retry loops once those capabilities are needed.
 
 | CareerPilot | LangGraph |
 | --- | --- |
@@ -142,8 +166,17 @@ LangGraph should not replace the domain model. It can replace or augment schedul
 | trace event | checkpoint/trace |
 | approval pause | interrupt |
 
-The migration goal is comparison, not framework worship. Keep domain tools, artifact contracts, cache keys, cost policy, and approval rules owned by CareerPilot.
+CareerPilot now exposes a `WorkflowRuntime` boundary. The native runtime wraps the current in-process DAG executor. The LangGraph runtime can execute the same approved workflow template when LangGraph is installed, which lets the project compare behavior without rewriting product code.
+
+Recommended transition sequence:
+
+1. Use the LLM assistant planner for open-ended chat intent.
+2. Run the prep-plan workflow through the `WorkflowRuntime` boundary.
+3. Use LangGraph as the primary runtime for one workflow once the dependency is installed.
+4. Add approval pause/resume with LangGraph interrupts.
+5. Add retries, model routing, cache keys, and cost accounting behind the runtime boundary.
+6. Persist workflow runs/checkpoints in queryable tables after the API contract stabilizes.
 
 ## Interview Framing
 
-> I started from a real product workflow instead of a toy agent demo. I extracted a small DAG runtime so I could learn dependency validation, output passing, failure blocking, and trace events. That gives me a concrete foundation for later model routing, caching, budgets, retries, approvals, and a LangGraph adapter.
+> I started from a real product workflow instead of a toy agent demo. I built typed workflow contracts, an allow-listed tool boundary, and a small native DAG runtime to learn dependency validation, output passing, failure blocking, and trace events. Then I introduced LangGraph behind a runtime interface so the project can use production-grade checkpointing, interrupts, and retry mechanics without giving up domain ownership.

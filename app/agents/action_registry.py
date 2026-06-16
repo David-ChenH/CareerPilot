@@ -1,60 +1,86 @@
-import re
-from dataclasses import dataclass, field
-from typing import Any
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from app.agents.assistant_planner import (
+    ActionExecutionResult,
+    ActionExecutionStatus,
+    AssistantPlannedAction,
+)
 
 
-URL_PATTERN = re.compile(r"https?://[^\s<>\]\)\"']+")
-JOB_ACTION_TERMS = {
-    "analyze",
-    "analyse",
-    "save",
-    "track",
-    "ingest",
-    "fetch",
-    "job",
-    "role",
-    "position",
-    "application",
-    "apply",
-}
+ApprovalPolicy = Callable[[AssistantPlannedAction], bool]
 
 
 @dataclass(frozen=True)
-class AgentAction:
+class ActionMetadata:
     name: str
-    parameters: dict[str, Any] = field(default_factory=dict)
-    summary: str = ""
+    description: str
+    required_arguments: tuple[str, ...] = ()
+    requires_approval: ApprovalPolicy = lambda _action: False
 
 
 class ActionRegistry:
-    """Small allow-list of application actions the assistant may request."""
+    """Allow-list and validation boundary for assistant-planned actions."""
 
     def __init__(self) -> None:
-        self._actions = {"ingest_job_from_url"}
+        self._actions = {
+            "ingest_job_from_url": ActionMetadata(
+                name="ingest_job_from_url",
+                description="Fetch a job link, analyze it, and optionally save it to the application tracker.",
+                required_arguments=("url", "save"),
+                requires_approval=lambda action: bool(action.arguments.save),
+            ),
+            "update_profile_memory": ActionMetadata(
+                name="update_profile_memory",
+                description="Apply reviewed profile-memory updates.",
+                required_arguments=("proposed_updates",),
+                requires_approval=lambda _action: True,
+            ),
+        }
 
     def is_allowed(self, action_name: str) -> bool:
         return action_name in self._actions
 
-    def detect_from_message(self, message: str) -> AgentAction | None:
-        clean_message = message.strip()
-        url = _extract_first_url(clean_message)
-        if not url:
-            return None
+    def metadata(self, action_name: str) -> ActionMetadata | None:
+        return self._actions.get(action_name)
 
-        normalized = clean_message.lower()
-        if not any(term in normalized for term in JOB_ACTION_TERMS):
-            return None
+    def validate_planned_action(self, action: AssistantPlannedAction) -> ActionExecutionResult | None:
+        metadata = self.metadata(action.name)
+        if metadata is None:
+            return ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.REJECTED,
+                summary=f"Rejected unknown assistant action: {action.name}.",
+            )
 
-        requested_save = any(term in normalized for term in ["save", "track", "application", "apply"])
-        return AgentAction(
-            name="ingest_job_from_url",
-            parameters={"url": url, "save": requested_save},
-            summary="Detected a job URL and routed it into the job ingestion workflow.",
-        )
+        missing = [
+            argument
+            for argument in metadata.required_arguments
+            if _is_missing_argument(action, argument)
+        ]
+        if missing:
+            return ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.REJECTED,
+                summary=f"Rejected {action.name}: missing required argument(s): {', '.join(missing)}.",
+            )
 
+        if metadata.requires_approval(action) and not action.approval_confirmed:
+            return ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.NEEDS_CONFIRMATION,
+                summary=f"{action.name} needs confirmation before CareerPilot changes local data.",
+                details={"arguments": action.arguments.model_dump(mode="json")},
+            )
 
-def _extract_first_url(message: str) -> str | None:
-    match = URL_PATTERN.search(message)
-    if not match:
         return None
-    return match.group(0).rstrip(".,;:")
+
+
+def _is_missing_argument(action: AssistantPlannedAction, argument: str) -> bool:
+    if argument == "url":
+        return not (action.arguments.url or "").strip()
+    if argument == "save":
+        return action.arguments.save is None
+    if argument == "proposed_updates":
+        return not action.arguments.proposed_updates.to_updates()
+    return True

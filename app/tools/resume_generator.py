@@ -13,6 +13,7 @@ from app.artifacts import (
 )
 from app.config.env import load_local_env
 from app.db.models import JobRecord
+from app.memory.profile_schema import ProfileV1
 from app.tools.llm_job_chat import DEFAULT_LLM_MODEL
 from app.tools.pdf_writer import build_simple_pdf
 
@@ -38,7 +39,7 @@ class ResumeArtifact(BaseModel):
 
 
 def generate_resume_pdf(
-    profile: dict[str, Any],
+    profile: dict[str, Any] | ProfileV1,
     role_title: str,
     company: str | None = None,
     job: JobRecord | None = None,
@@ -56,7 +57,7 @@ def generate_resume_pdf(
 
 
 def generate_resume_artifact(
-    profile: dict[str, Any],
+    profile: dict[str, Any] | ProfileV1,
     role_title: str,
     company: str | None = None,
     job: JobRecord | None = None,
@@ -65,7 +66,7 @@ def generate_resume_artifact(
 ) -> ResumeArtifact:
     if use_llm:
         try:
-            draft = generate_resume_draft_with_llm(profile, role_title, company=company, job=job, notes=notes)
+            draft = generate_resume_draft_with_llm(_profile_for_llm(profile), role_title, company=company, job=job, notes=notes)
             return ResumeArtifact(
                 pdf=build_simple_pdf(draft.title, [(section.heading, section.bullets) for section in draft.sections]),
                 draft=draft,
@@ -149,19 +150,30 @@ def generate_resume_draft_with_llm(
     return draft
 
 
+def _profile_for_llm(profile: dict[str, Any] | ProfileV1) -> dict[str, Any]:
+    return profile.to_runtime_context() if isinstance(profile, ProfileV1) else profile
+
+
 def generate_resume_draft_deterministically(
-    profile: dict[str, Any],
+    profile: dict[str, Any] | ProfileV1,
     role_title: str,
     company: str | None = None,
     job: JobRecord | None = None,
     notes: str | None = None,
 ) -> tuple[str, list[tuple[str, list[str]]]]:
-    title = profile.get("current_role", {}).get("title", "Software Engineer")
-    identity = profile.get("positioning", {}).get("target_identity") or profile.get("positioning", {}).get("summary") or title
+    if isinstance(profile, ProfileV1):
+        title = profile.current_title
+        identity = profile.target_identity
+        skills = _pick(profile.skill_names, 12)
+        highlights = _pick(profile.resume_highlights(limit=8), 8)
+        goals = _pick(profile.career_goals, 4)
+    else:
+        title = profile.get("current_role", {}).get("title", "Software Engineer")
+        identity = profile.get("positioning", {}).get("target_identity") or profile.get("positioning", {}).get("summary") or title
+        skills = _pick(profile.get("technical_strengths", []), 12)
+        highlights = _pick(profile.get("experience_highlights", []), 8)
+        goals = _pick(profile.get("career_goals", []), 4)
     target = f"{role_title}{f' at {company}' if company else ''}"
-    skills = _pick(profile.get("technical_strengths", []), 12)
-    highlights = _pick(profile.get("experience_highlights", []), 8)
-    goals = _pick(profile.get("career_goals", []), 4)
     job_skills = _pick(job.skills if job else [], 8)
     resume_guidance = _pick((job.analysis or {}).get("guidance", {}).get("resume_guidance", []) if job else [], 5)
 

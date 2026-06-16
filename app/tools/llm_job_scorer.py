@@ -22,7 +22,7 @@ class LLMFitEvidence(BaseModel):
         default=None,
         description=(
             "YAML-like profile path for a positive profile fact, such as "
-            "technical_strengths[0] or experience_highlights[3]. Leave null for absence claims."
+            "skills[0].name, projects[1].summary, or experience_highlights[3]. Leave null for absence claims."
         ),
     )
     severity: str | None = Field(default=None, description="One of: critical, useful, nice-to-have, blocker, positive.")
@@ -115,7 +115,7 @@ def score_job_fit_with_llm(
                         "or closely paraphrase parsed_job and include a profile signal when the claim compares against the user. "
                         "When profile_signal cites a positive profile fact, include a profile_source_path using the supplied "
                         "profile keys and array indexes when possible, for example technical_strengths[1] or "
-                        "experience_highlights[4]. For absence claims like 'C++ is not listed in the profile', leave "
+                        "skills[1].name, projects[0].summary, or experience_highlights[4]. For absence claims like 'C++ is not listed in the profile', leave "
                         "profile_source_path null."
                     ),
                 },

@@ -167,7 +167,7 @@ pip install -e ".[dev,browser]"
 playwright install chromium
 ```
 
-Optional LLM support:
+Optional AI support, including OpenAI API usage and LangGraph runtime experiments:
 
 ```bash
 pip install -e ".[dev,ai]"
@@ -180,6 +180,7 @@ Then edit `.env`:
 OPENAI_API_KEY=your_api_key_here
 JOB_AGENT_LLM_MODEL=gpt-4o-mini
 JOB_AGENT_WEB_SEARCH_MODEL=gpt-5.4-mini
+JOB_AGENT_PLANNER_MODEL=gpt-4o-mini
 ```
 
 You can combine extras:
@@ -194,7 +195,7 @@ pip install -e ".[dev,browser,ai]"
 cp app/memory/profile.example.yaml app/memory/profile.local.yaml
 ```
 
-Edit `app/memory/profile.local.yaml` with your own background, target roles, skills, preferences, and avoid-list.
+Edit `app/memory/profile.local.yaml` with your own identity, education, skills, projects, target roles, preferences, and avoid-list. The file uses `profile_schema_version: 1`, the first official CareerPilot profile schema.
 
 If no local profile exists, CareerPilot uses the generic example profile.
 
@@ -356,13 +357,15 @@ CareerPilot is intentionally shaped around backend and AI platform concerns:
 - typed workflow templates instead of unbounded autonomy
 - explicit local memory updates instead of silent profile mutation
 - semantic LLM analysis with schema validation
+- LLM assistant planning with backend action validation and approval gates
 - observable background workflows with graph and trace artifacts
+- a native workflow runtime plus a LangGraph runtime boundary
 - local evaluation fixtures for regression testing
 - privacy boundaries around profile, application history, and secrets
 
 A concise interview explanation:
 
-> CareerPilot started as a local AI job-search workbench, but I designed it as an agent workflow platform exercise. The app separates prompts, tools, workflow templates, and persistence. Background job ingestion runs through a typed DAG executor with allow-listed tools, dependency-output passing, failure blocking, and trace artifacts. This lets me discuss production agent concerns such as observability, evaluation, memory, cost control, retries, and future LangGraph migration from a concrete codebase.
+> CareerPilot started as a local AI job-search workbench, but I designed it as an agent workflow platform exercise. The app separates prompts, tools, workflow templates, and persistence. Chat intent is interpreted by an LLM planner, while the backend validates allow-listed actions and approval rules. Workflows run through typed DAG contracts with trace artifacts, and LangGraph can sit behind the same runtime boundary for stateful orchestration. This lets me discuss production agent concerns such as observability, evaluation, memory, cost control, retries, human approval, and framework integration from a concrete codebase.
 
 ## Documentation
 
@@ -378,6 +381,8 @@ A concise interview explanation:
 Near-term:
 
 - richer prep-plan workflow DAG with parallel branches
+- richer assistant action confirmation UI
+- LangGraph-backed prep-plan workflow execution
 - model routing and cost tracking
 - cache keys for reusable intermediate outputs
 - persistent workflow traces
@@ -385,7 +390,6 @@ Near-term:
 
 Later:
 
-- LangGraph adapter comparison
 - Docker support
 - optional Postgres or pgvector backend
 - target-company watchlist ingestion

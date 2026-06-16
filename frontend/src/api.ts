@@ -19,6 +19,8 @@ import type {
   JobChatResponse,
   JobDetail,
   JobRecord,
+  LeetCodeProblem,
+  LeetCodeProblemRequest,
   ProfileApplyRequest,
   ProfileApplyResponse,
   ProfileProposalRefineRequest,
@@ -337,6 +339,30 @@ export function updatePrepTask(planId: number, day: number, taskIndex: number, c
   return request<PrepPlan>(`/prep-plans/${planId}/days/${day}/tasks/${taskIndex}`, {
     method: "PATCH",
     body: JSON.stringify({ completed })
+  });
+}
+
+export function listLeetCodeProblems(): Promise<LeetCodeProblem[]> {
+  return request<LeetCodeProblem[]>("/leetcode/problems");
+}
+
+export function createLeetCodeProblem(body: LeetCodeProblemRequest): Promise<LeetCodeProblem> {
+  return request<LeetCodeProblem>("/leetcode/problems", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export function updateLeetCodeProblem(problemId: number, body: LeetCodeProblemRequest): Promise<LeetCodeProblem> {
+  return request<LeetCodeProblem>(`/leetcode/problems/${problemId}`, {
+    method: "PUT",
+    body: JSON.stringify(body)
+  });
+}
+
+export function deleteLeetCodeProblem(problemId: number): Promise<void> {
+  return request<void>(`/leetcode/problems/${problemId}`, {
+    method: "DELETE"
   });
 }
 

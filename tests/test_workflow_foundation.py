@@ -1,4 +1,6 @@
+import sys
 from pathlib import Path
+from types import ModuleType
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,8 @@ from app.workflows import (
     WorkflowExecutionError,
     WorkflowExecutor,
     WorkflowGraphError,
+    LangGraphWorkflowRuntime,
+    NativeWorkflowRuntime,
     WorkflowRun,
     WorkflowTask,
     WorkflowToolRegistry,
@@ -21,11 +25,40 @@ from app.workflows import (
     workflow_graph_from_definition,
 )
 from app.agents.coordinator import JobSearchCoordinator
-from app.db.models import AgentTaskStatus, AgentTaskType
+from app.db.models import AgentTaskStatus, AgentTaskType, LeetCodeProblem
 from app.db.repository import JobRepository
 from app.memory.profile_store import ProfileStore
 from app.tools.scoring import JobFit
 from app.workflows.job_ingestion import JobIngestionWorkflowRunner, build_job_ingestion_workflow
+from app.workflows.prep_plan import PrepPlanWorkflowRequest, PrepPlanWorkflowRunner, build_prep_plan_workflow
+
+
+class _FakeStateGraph:
+    def __init__(self, _state_type) -> None:
+        self.nodes = {}
+        self.edges = {}
+
+    def add_node(self, name: str, handler) -> None:
+        self.nodes[name] = handler
+
+    def add_edge(self, source: str, target: str) -> None:
+        self.edges[source] = target
+
+    def compile(self):
+        return _FakeCompiledGraph(self.nodes, self.edges)
+
+
+class _FakeCompiledGraph:
+    def __init__(self, nodes, edges) -> None:
+        self.nodes = nodes
+        self.edges = edges
+
+    def invoke(self, state):
+        current = self.edges["__start__"]
+        while current != "__end__":
+            state = self.nodes[current](state)
+            current = self.edges[current]
+        return state
 
 
 def _prep_workflow() -> WorkflowDefinition:
@@ -220,6 +253,47 @@ def test_executor_rejects_unknown_tools_before_running() -> None:
         WorkflowExecutor(WorkflowToolRegistry()).execute(workflow)
 
 
+def test_native_workflow_runtime_wraps_existing_executor() -> None:
+    registry = WorkflowToolRegistry()
+    registry.register("identity", lambda task_input, _dependencies: task_input)
+    workflow = WorkflowDefinition(
+        id="native-runtime",
+        tasks=[WorkflowTask(id="first", tool="identity", input={"ok": True})],
+    )
+
+    run = NativeWorkflowRuntime().execute(workflow, registry)
+
+    assert run.status == "completed"
+    assert run.outputs["first"] == {"ok": True}
+
+
+def test_langgraph_runtime_runs_approved_workflow_with_same_outputs(monkeypatch) -> None:
+    fake_langgraph = ModuleType("langgraph")
+    fake_graph = ModuleType("langgraph.graph")
+    fake_graph.START = "__start__"
+    fake_graph.END = "__end__"
+    fake_graph.StateGraph = _FakeStateGraph
+    monkeypatch.setitem(sys.modules, "langgraph", fake_langgraph)
+    monkeypatch.setitem(sys.modules, "langgraph.graph", fake_graph)
+
+    registry = WorkflowToolRegistry()
+    registry.register("root", lambda task_input, _dependencies: {"value": task_input["value"]})
+    registry.register("join", lambda _input, dependencies: {"joined": dependencies["root"]["value"]})
+    workflow = WorkflowDefinition(
+        id="langgraph-runtime",
+        tasks=[
+            WorkflowTask(id="root", tool="root", input={"value": "ok"}),
+            WorkflowTask(id="join", tool="join", dependencies=["root"]),
+        ],
+    )
+
+    run = LangGraphWorkflowRuntime().execute(workflow, registry)
+
+    assert run.status == "completed"
+    assert run.outputs["join"] == {"joined": "ok"}
+    assert [event.event for event in run.trace_events] == ["started", "completed", "started", "completed"]
+
+
 def test_executor_blocks_transitive_dependents_and_continues_independent_branch() -> None:
     registry = WorkflowToolRegistry()
     registry.register("fail", lambda _input, _dependencies: (_ for _ in ()).throw(RuntimeError("broken")))
@@ -264,6 +338,92 @@ def test_job_ingestion_template_includes_save_only_when_requested() -> None:
 
     assert [task.id for task in save_workflow.tasks] == ["fetch_job", "analyze_job", "save_job"]
     assert [task.id for task in preview_workflow.tasks] == ["fetch_job", "analyze_job"]
+
+
+def test_prep_plan_workflow_template_exposes_agentic_branches() -> None:
+    workflow = build_prep_plan_workflow(PrepPlanWorkflowRequest(timeline_days=7, hours_per_day=2, use_llm=False))
+
+    assert [task.id for task in workflow.tasks] == [
+        "plan_prep_workflow",
+        "analyze_profile",
+        "analyze_target_job",
+        "analyze_coding_practice",
+        "identify_skill_gaps",
+        "generate_learning_plan",
+        "generate_coding_plan",
+        "generate_system_design_plan",
+        "evaluate_prep_plan",
+        "aggregate_plan",
+    ]
+    assert topological_groups(workflow.tasks) == [
+        ["plan_prep_workflow"],
+        ["analyze_coding_practice", "analyze_profile", "analyze_target_job"],
+        ["identify_skill_gaps"],
+        ["generate_coding_plan", "generate_learning_plan", "generate_system_design_plan"],
+        ["evaluate_prep_plan"],
+        ["aggregate_plan"],
+    ]
+
+
+def test_prep_plan_workflow_generates_traceable_plan() -> None:
+    plan = PrepPlanWorkflowRunner(
+        profile=ProfileStore().load_model(),
+        jobs=[],
+        coding_problems=[
+            LeetCodeProblem(
+                title="Two Sum",
+                url="https://leetcode.com/problems/two-sum/",
+                category="hash map",
+                tags=["array"],
+            )
+        ],
+    ).run(
+        PrepPlanWorkflowRequest(
+            timeline_days=3,
+            hours_per_day=2,
+            focus="Kubernetes, workflow orchestration",
+            use_llm=False,
+        )
+    )
+
+    assert plan.source == "workflow_generated"
+    assert len(plan.days) == 3
+    assert plan.workflow_graph is not None
+    assert plan.workflow_graph["workflow_id"] == "prep_plan_generation"
+    assert plan.workflow_run is not None
+    assert plan.workflow_run["status"] == "completed"
+    assert plan.evaluation is not None
+    assert plan.evaluation["status"] == "pass"
+
+
+def test_prep_plan_workflow_can_run_through_langgraph_runtime(monkeypatch) -> None:
+    fake_langgraph = ModuleType("langgraph")
+    fake_graph = ModuleType("langgraph.graph")
+    fake_graph.START = "__start__"
+    fake_graph.END = "__end__"
+    fake_graph.StateGraph = _FakeStateGraph
+    monkeypatch.setitem(sys.modules, "langgraph", fake_langgraph)
+    monkeypatch.setitem(sys.modules, "langgraph.graph", fake_graph)
+
+    plan = PrepPlanWorkflowRunner(
+        profile=ProfileStore().load_model(),
+        jobs=[],
+        coding_problems=[],
+        runtime=LangGraphWorkflowRuntime(),
+    ).run(
+        PrepPlanWorkflowRequest(
+            timeline_days=2,
+            hours_per_day=1,
+            focus="workflow orchestration",
+            use_llm=False,
+        )
+    )
+
+    assert plan.source == "workflow_generated"
+    assert len(plan.days) == 2
+    assert plan.workflow_run is not None
+    assert plan.workflow_run["workflow_id"] == "prep_plan_generation"
+    assert plan.workflow_run["status"] == "completed"
 
 
 def test_job_ingestion_runner_syncs_executor_trace_to_agent_task(tmp_path: Path, monkeypatch) -> None:

@@ -158,7 +158,6 @@ export type JobChatMessage = {
 
 export type JobChatRequest = {
   message: string;
-  use_llm: boolean;
   use_web_search: boolean;
 };
 
@@ -176,7 +175,6 @@ export type AnalysisChatRequest = {
   message: string;
   history: JobChatMessage[];
   source_url?: string | null;
-  use_llm: boolean;
   use_web_search: boolean;
 };
 
@@ -190,7 +188,6 @@ export type AssistantChatRequest = {
   focus: AssistantFocus;
   session_id?: number | null;
   history: JobChatMessage[];
-  use_llm: boolean;
   use_web_search: boolean;
 };
 
@@ -217,8 +214,32 @@ export type GlobalChatSession = {
 export type GlobalChatRequest = {
   message: string;
   session_id?: number | null;
-  use_llm: boolean;
   use_web_search: boolean;
+};
+
+export type AssistantPlannedAction = {
+  name: string;
+  arguments: Record<string, unknown>;
+  target_context?: string | null;
+  confidence: number;
+  approval_required: boolean;
+  approval_confirmed: boolean;
+  reason?: string | null;
+};
+
+export type AssistantPlan = {
+  intent_summary: string;
+  status: "answer_only" | "ready" | "needs_clarification" | "rejected";
+  actions: AssistantPlannedAction[];
+  confidence: number;
+  clarification_question?: string | null;
+};
+
+export type ActionExecutionResult = {
+  action_name: string;
+  status: "executed" | "rejected" | "failed" | "needs_confirmation";
+  summary: string;
+  details: Record<string, unknown>;
 };
 
 export type GlobalChatResponse = {
@@ -230,6 +251,8 @@ export type GlobalChatResponse = {
   used_web_search: boolean;
   citations: Array<{ title: string; url: string }>;
   actions: AgentTask[];
+  assistant_plan?: AssistantPlan | null;
+  action_results?: ActionExecutionResult[];
 };
 
 export type AnalyzeJobRequest = {
@@ -446,6 +469,9 @@ export type PrepPlan = {
   days: PrepDay[];
   schema_version: number;
   revision: number;
+  workflow_graph?: WorkflowGraph | null;
+  workflow_run?: WorkflowRunArtifact | null;
+  evaluation?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -461,6 +487,29 @@ export type PrepPlanGenerateRequest = {
 export type PrepPlanImportRequest = {
   title: string;
   content: string;
+};
+
+export type LeetCodeStatus = "todo" | "in_progress" | "solved" | "review";
+
+export type LeetCodeProblem = {
+  id: number;
+  title: string;
+  url: string;
+  category: string;
+  tags: string[];
+  note?: string | null;
+  status: LeetCodeStatus;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type LeetCodeProblemRequest = {
+  title: string;
+  url: string;
+  category: string;
+  tags: string[];
+  note?: string | null;
+  status: LeetCodeStatus;
 };
 
 export type ResumeGenerateRequest = {

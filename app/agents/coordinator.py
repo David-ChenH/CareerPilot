@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from app.agents.assistant_planner import ActionExecutionResult, AssistantPlan
 from app.artifacts import (
     JOB_ANALYSIS_PROMPT_VERSION,
     JOB_ANALYSIS_WORKFLOW_VERSION,
@@ -9,6 +10,7 @@ from app.artifacts import (
 from app.db.models import AgentTask, ApplicationStatus, ApplicationType, ChatRole, GlobalChatMessage, GlobalChatSession, JobChatMessage, JobDetail, JobRecord
 from app.db.repository import JobRepository
 from app.memory.profile_store import ProfileStore
+from app.memory.profile_schema import ProfileV1
 from app.tools.job_parser import ParsedJob, parse_job_description
 from app.tools.job_extraction import ExtractedJobPosting
 from app.tools.llm_global_chat import LLMGlobalChatUnavailable, answer_global_chat_with_llm
@@ -26,7 +28,6 @@ from app.tools.llm_fit_validator import (
 )
 from app.tools.llm_job_parser import LLMJobParserUnavailable, parse_job_with_llm, parse_large_job_with_llm
 from app.tools.llm_job_scorer import score_job_fit_with_llm
-from app.tools.profile_update_intent import extract_profile_updates_from_message
 from app.tools.scoring import JobFit
 from app.tools.text_budget import compact_job_text
 from app.tools.llm_job_chat import DEFAULT_LLM_MODEL
@@ -140,6 +141,8 @@ class GlobalChatResponse(BaseModel):
     used_web_search: bool = False
     citations: list[dict[str, str]] = Field(default_factory=list)
     actions: list[AgentTask] = Field(default_factory=list)
+    assistant_plan: AssistantPlan | None = None
+    action_results: list[ActionExecutionResult] = Field(default_factory=list)
 
 
 class JobSearchCoordinator:
@@ -333,7 +336,7 @@ class JobSearchCoordinator:
 
     def save_analysis(self, analysis: JobAnalysisResponse, source_url: str | None = None) -> JobRecord:
         parsed_job = analysis.parsed_job
-        profile = self.profile_store.load()
+        profile = self.profile_store.load_model()
         return self.repository.save_job(
             JobRecord(
                 title=parsed_job.title,
@@ -358,7 +361,7 @@ class JobSearchCoordinator:
         source_url: str | None = None,
     ) -> JobRecord | None:
         parsed_job = analysis.parsed_job
-        profile = self.profile_store.load()
+        profile = self.profile_store.load_model()
         return self.repository.update_job_analysis(
             job_id,
             JobRecord(
@@ -390,9 +393,9 @@ class JobSearchCoordinator:
         )
         messages = [*self.repository.list_chat_messages(job_id)]
 
-        answer = _fallback_chat_answer(detail.analysis, detail.job.title, request.message, request.use_web_search)
+        answer = _chat_requires_llm_answer()
         citations: list[dict[str, str]] = []
-        responder_used = "deterministic"
+        responder_used = "unavailable"
         responder_warning = None
 
         if request.use_llm:
@@ -408,6 +411,7 @@ class JobSearchCoordinator:
                 responder_used = "llm"
             except LLMJobChatUnavailable as error:
                 responder_warning = str(error)
+                answer = _chat_requires_llm_answer(str(error))
 
         assistant_message = self.repository.add_chat_message(
             JobChatMessage(
@@ -455,9 +459,9 @@ class JobSearchCoordinator:
             analysis=analysis.model_dump(exclude={"saved_job"}),
         )
 
-        answer = _fallback_chat_answer(detail.analysis, detail.job.title, request.message, request.use_web_search)
+        answer = _chat_requires_llm_answer()
         citations: list[dict[str, str]] = []
-        responder_used = "deterministic"
+        responder_used = "unavailable"
         responder_warning = None
 
         if request.use_llm:
@@ -473,6 +477,7 @@ class JobSearchCoordinator:
                 responder_used = "llm"
             except LLMJobChatUnavailable as error:
                 responder_warning = str(error)
+                answer = _chat_requires_llm_answer(str(error))
 
         assistant_message = JobChatMessage(
             id=None,
@@ -588,29 +593,9 @@ class JobSearchCoordinator:
         )
         messages = [*self.repository.list_global_chat_messages(session.id)]
         jobs = self.repository.list_jobs()
-        profile_updates = extract_profile_updates_from_message(request.message)
-        if profile_updates:
-            self.profile_store.apply_updates(profile_updates, source="assistant_chat")
-            answer = _profile_update_answer(profile_updates)
-            assistant_message = self.repository.add_global_chat_message(
-                GlobalChatMessage(
-                    session_id=session.id,
-                    role=ChatRole.ASSISTANT,
-                    content=answer,
-                )
-            )
-            return GlobalChatResponse(
-                answer=answer,
-                session=self.repository.get_global_chat_session(session.id) or session,
-                messages=[*messages, assistant_message],
-                responder_used="profile_update",
-                used_web_search=False,
-                citations=[],
-            )
-
-        answer = _fallback_global_chat_answer(jobs, request.message, request.use_web_search)
+        answer = _chat_requires_llm_answer()
         citations: list[dict[str, str]] = []
-        responder_used = "deterministic"
+        responder_used = "unavailable"
         responder_warning = None
 
         if request.use_llm:
@@ -626,6 +611,7 @@ class JobSearchCoordinator:
                 responder_used = "llm"
             except LLMGlobalChatUnavailable as error:
                 responder_warning = str(error)
+                answer = _chat_requires_llm_answer(str(error))
 
         assistant_message = self.repository.add_global_chat_message(
             GlobalChatMessage(
@@ -771,19 +757,8 @@ def _validate_and_repair_fit(
     return fit, report, "llm_failed", "Fit validation failed; review the analysis before relying on it."
 
 
-def _profile_update_answer(updates: dict[str, list[str]]) -> str:
-    lines = ["Updated your local profile memory with:"]
-    for key, values in updates.items():
-        label = key.replace("_", " ").title()
-        for value in values:
-            lines.append(f"- {label}: {value}")
-    lines.append("")
-    lines.append("This was saved locally to `profile.local.yaml` and recorded in the profile audit log.")
-    return "\n".join(lines)
-
-
-def _classify_application_type(profile: dict, job_company: str | None, source_url: str | None = None) -> ApplicationType:
-    current_company = (profile.get("current_role") or {}).get("company")
+def _classify_application_type(profile: dict | ProfileV1, job_company: str | None, source_url: str | None = None) -> ApplicationType:
+    current_company = profile.current_company if isinstance(profile, ProfileV1) else (profile.get("current_role") or {}).get("company")
     if not current_company or not job_company:
         return ApplicationType.UNKNOWN
 
@@ -822,6 +797,16 @@ def _chat_title_from_message(message: str) -> str:
     if not words:
         return "New chat"
     return " ".join(words[:8])[:80]
+
+
+def _chat_requires_llm_answer(reason: str | None = None) -> str:
+    answer = (
+        "Assistant chat requires LLM mode to understand free-form messages. "
+        "You can still use the Analyze, Applications, Prep Plan, Resume, Profile, and Coding Practice tools directly."
+    )
+    if reason:
+        return f"{answer} Current LLM chat path is unavailable: {reason}"
+    return answer
 
 
 def _fallback_chat_answer(analysis: dict | None, job_title: str | None, question: str, use_web_search: bool = False) -> str:

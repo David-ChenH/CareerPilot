@@ -8,6 +8,30 @@ For the full project plan, see [Roadmap](roadmap.md).
 
 This project is intentionally backend/agent focused. Frontend work should make the system demoable and pleasant to use, but the main learning value is in orchestration, memory, tool use, evaluation, persistence, and production-style architecture.
 
+## Skill focus for AI / agentic SDE transition
+
+CareerPilot should be built around the skills most relevant to senior backend, AI platform, and agentic workflow infrastructure roles.
+
+| Learning area | What to learn | How CareerPilot should teach it |
+| --- | --- | --- |
+| Agent workflow runtime | DAG execution, tools, planner/evaluator/aggregator patterns, approval gates, retry/resume, traces. | Turn prep planning into a dependency-aware workflow with observable task artifacts. |
+| Evaluation and observability | Golden eval cases, LLM validation, provenance, prompt/model/schema versions, trace replay. | Expand job-analysis evals and add prep-plan and resume-generation evals. |
+| Memory and RAG | Durable profile memory, episodic memory, retrieval, embeddings, RAG evaluation, permission-aware context. | Improve structured profile/job/prep/coding memory first, then add embeddings over stable records. |
+| Production backend and distributed systems | Workers, queues, consistency, scaling, failure recovery, repository boundaries, durable state. | Add background worker boundaries, persistent traces, and workflow state before cloud migration. |
+| Cloud-native infrastructure | Docker, deployment, health checks, auth, managed persistence, Kubernetes basics. | Containerize the backend/frontend/worker split, deploy simply, then add Kubernetes. |
+| Kafka/Flink and streaming | Topics, partitions, consumer groups, event time, windows, checkpoints, stateful stream processing. | Add only after workflow events exist; use them for prep analytics or skill-gap trends. |
+
+The recommended learning order is:
+
+1. Agent workflow runtime.
+2. Evaluation and observability.
+3. Memory and RAG.
+4. Production backend and cloud.
+5. Kubernetes.
+6. Kafka/Flink.
+
+This order keeps the project aligned with the portfolio story: CareerPilot is a production-style agentic workflow system, not just a hosted chatbot.
+
 ## Mental model
 
 An agentic application usually combines five pieces:
@@ -31,6 +55,22 @@ An agentic application usually combines five pieces:
 5. Evaluation and observability
    - Ways to know whether the system behaved well.
    - Examples: test cases, traces, logs, score explanations, expected outputs.
+
+## Semantic Ownership Rule
+
+CareerPilot uses this rule across agent-facing features:
+
+```text
+LLM owns semantic interpretation.
+Backend owns contracts, permissions, validation, persistence, and execution.
+Deterministic code owns syntax, schemas, normalization, evidence checks, migrations, and safety gates.
+```
+
+Do not use deterministic string matching for open-ended semantic decisions. Earlier deterministic parsing and scoring experiments were useful learning steps, but they showed the maintenance problem: every new phrasing or edge case becomes another rule. The production direction is LLM-led semantics with typed contracts and backend validation.
+
+For chat specifically, free-form assistant behavior requires the LLM path. If LLM chat is unavailable, the app should say so honestly instead of returning deterministic canned text as though it understood the conversation. Explicit buttons, forms, imports, exports, and workflow endpoints can still run without chat-based semantic planning.
+
+Open-ended chat intent now follows the same rule. The LLM planner owns semantic interpretation such as "save this role, update my profile, and make a prep plan", including typos and multi-intent messages. The backend owns the action allow-list, argument validation, approval requirements, and execution. This avoids repeating the earlier deterministic-parser mistake where every new phrasing became a new rule.
 
 ## Agent Skill, Extraction Override, Prompt, Tool, and Workflow
 
@@ -109,7 +149,7 @@ The backend stores this as a `workflow_graph` artifact on the `AgentTask`, plus 
 
 This maps naturally to AWS Step Functions:
 
-| Step Functions | CareerPilot DAG | LangGraph later |
+| Step Functions | CareerPilot DAG | LangGraph runtime |
 | --- | --- | --- |
 | State machine | `WorkflowDefinition` | Graph |
 | Task state | `WorkflowTask` | Node |
@@ -119,7 +159,7 @@ This maps naturally to AWS Step Functions:
 | Execution history | Future workflow trace | Checkpoints and trace |
 | Callback approval | Future paused run | Interrupt |
 
-The DAG contract should survive a LangGraph migration. LangGraph may replace scheduling, checkpoint, and pause-resume mechanics, but it should not own CareerPilot's domain definitions, cache identity, cost policy, or approval rules.
+The DAG contract should survive a LangGraph migration. CareerPilot now has a `WorkflowRuntime` boundary: the native runtime wraps the local executor, and the LangGraph runtime can run the same approved workflow when the dependency is installed. LangGraph should become the main runtime for checkpointing, pause/resume, interrupts, conditional branches, and retry loops, while CareerPilot keeps ownership of domain definitions, cache identity, cost policy, evals, and approval rules.
 
 ## Current architecture
 
@@ -139,7 +179,7 @@ HTTP request
   -> response with fit, gaps, resume emphasis, prep topics
 ```
 
-The coordinator keeps this sequence observable and testable. A later LangGraph migration can model the same steps as nodes without changing their ownership boundaries.
+The coordinator keeps this sequence observable and testable. LangGraph can model the same steps as nodes through the runtime boundary without changing their ownership boundaries.
 
 ## Code map
 
@@ -168,19 +208,19 @@ In a future version, this is where we can introduce:
 
 `app/memory/profile.example.yaml`
 
-A generic structured profile template. It shows the shape of the personal knowledge base without containing private information.
+A generic structured profile template. It uses the first official profile schema, `profile_schema_version: 1`, without containing private information.
 
 `app/memory/profile.local.yaml`
 
-Your private structured personal knowledge base. It stores background, target roles, strengths, learning goals, must-haves, nice-to-haves, and avoid criteria.
+Your private structured personal knowledge base. It stores identity, education, skills, projects, background, experience highlights, target roles, learning goals, must-haves, nice-to-haves, and avoid criteria.
 
 This file is ignored by Git. Create it by copying `profile.example.yaml`.
 
-The profile starts as YAML because it is easy to inspect and edit. Later, profile updates can be proposed by the agent and written through a controlled update flow.
+The profile is YAML because it is easy to inspect and edit. Pydantic is the schema source of truth: the app reads YAML into `ProfileV1`, validates it, then exposes a runtime context to prompts and tools. YAML is the storage format; Pydantic is the contract.
 
 `app/memory/profile_store.py`
 
-Loads the profile from disk. This is deliberately small now, but it gives us a single place to add:
+Loads the profile from disk. It validates the official schema and temporarily projects structured fields into legacy keys such as `technical_strengths` and `current_role` so older tools keep working while they move to typed profile accessors. This gives us a single place to add:
 
 - validation
 - change history
@@ -316,7 +356,7 @@ load_profile + prepare_input
   -> generate_guidance
 ```
 
-This is not LangGraph yet. It is a small internal executor that teaches the same platform concepts: approved tools, dependencies, dependency outputs, task status, and trace events. That matters because "agentic" production systems are rarely just one prompt. They are workflows where model calls, deterministic tools, validators, and user-facing artifacts have clear boundaries.
+The native runtime teaches the same platform concepts LangGraph will later operate at production depth: approved tools, dependencies, dependency outputs, task status, and trace events. That matters because "agentic" production systems are rarely just one prompt. They are workflows where model calls, deterministic tools, validators, and user-facing artifacts have clear boundaries.
 
 The useful interview framing is:
 
@@ -592,13 +632,12 @@ DynamoDB can still be discussed as a production alternative for serverless workl
 
 Recommended sequence:
 
-1. Add more job-analysis eval cases from real failures.
-2. Move prep-plan generation onto a richer workflow DAG with parallel branches.
-3. Add workflow cache keys, model routing, cost tracking, retries, and approval pauses.
-4. Improve chat as a generic action surface across jobs, profile, prep plans, and resumes.
+1. Improve chat as an LLM-planned action surface across jobs, profile, prep plans, and resumes.
+2. Run one stable workflow through LangGraph behind the `WorkflowRuntime` boundary.
+3. Add more job-analysis, prep-plan, and assistant-planner eval cases from real failures.
+4. Add workflow cache keys, model routing, cost tracking, retries, and approval pauses.
 5. Add Docker once the workflow runtime shape is stable.
-6. Compare one stable workflow with a LangGraph adapter.
-7. Add target-company discovery after manual ingestion and analysis quality are stronger.
+6. Add target-company discovery after manual ingestion and analysis quality are stronger.
 
 ## Suggested reading
 

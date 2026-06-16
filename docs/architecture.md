@@ -153,7 +153,7 @@ Each `AgentTask` persists:
 ## Local-first components
 
 - FastAPI app: local API surface.
-- YAML profile store: human-readable background and preferences.
+- YAML profile store: human-readable `profile_schema_version: 1` profile validated by Pydantic.
 - SQLite repository: jobs, application state, chat sessions, prep plans, and agent tasks.
 - Analysis payload migrations: schema-versioned current projections plus append-only historical snapshots.
 - Job parser: deterministic metadata and skill-hint extraction.
@@ -163,12 +163,13 @@ Each `AgentTask` persists:
 - Job fetcher: combines canonical `JobPosting` JSON-LD metadata with Playwright-rendered content for individual URL analysis, preserving ordered section blocks for semantic classification.
 - Learned selector store: records declarative content-root selectors per careers domain, promotes them after repeated successful validation, and rediscovers extraction paths when a site drifts.
 - Agent-skill catalog: loads framework-neutral reusable guidance such as safe career-page extraction instructions.
-- Workflow executor: runs validated DAG templates with allow-listed tools, dependency-output passing, failure blocking, and in-memory trace events.
+- Assistant planner: uses LLM structured output to propose one or more chat-invoked actions, then relies on backend validation before anything executes.
+- Action registry: allow-lists executable assistant actions, validates required arguments, and enforces approval for local data mutation.
+- Workflow runtime: runs validated DAG templates with allow-listed tools, dependency-output passing, failure blocking, and trace events; the native runtime is the local baseline and LangGraph can sit behind the same boundary.
 - Fit contract: typed semantic score, explanation, and evidence models.
 - Evidence model: structured support for matches, gaps, concerns, recommendations, guidance, and profile-source grounding.
 - Agent coordinator: combines parser, scorer, storage, and suggestions.
 - Agent task lifecycle: persistent local workflow state for background operations.
-- Workflow runtime: validates typed DAG templates, runs allow-listed tools, passes dependency outputs, blocks failed dependents, and records in-memory trace events.
 - Context budgeter: compacts oversized fetched pages before parser/scorer/guidance model calls.
 - Chunked LLM extraction: for oversized pages, selects high-signal chunks, extracts structured facts per chunk, and merges them before final scoring.
 - Evaluation harness: repeatable quality checks for job-analysis behavior.
@@ -177,8 +178,8 @@ Each `AgentTask` persists:
 
 - Vector store for semantic profile and job retrieval.
 - Target-company discovery pipeline.
-- Model routing, cache, cost, retry, and approval policies in the workflow runtime.
-- LangGraph adapter comparison after workflow contracts stabilize.
+- Model routing, cache, cost, retry, and approval policies behind the workflow runtime boundary.
+- LangGraph-backed pause/resume, interrupts, checkpoints, and retry loops after one workflow proves stable.
 - Docker and Kubernetes manifests.
 
 ## Safety boundaries
@@ -226,7 +227,7 @@ The SQLite adapter currently owns these tables as one local persistence boundary
 
 - [Roadmap](roadmap.md): project status, next priorities, deferred work, and decision log.
 - [Job Ingestion](ingestion.md): URL fetching, JSON-LD, Playwright, selector learning, and target-company discovery.
-- [Workflow Runtime](workflow_runtime.md): DAG execution, cache reuse, routing, budgets, retries, approvals, traces, and a later LangGraph comparison.
+- [Workflow Runtime](workflow_runtime.md): DAG execution, runtime boundary, LangGraph transition, cache reuse, routing, budgets, retries, approvals, and traces.
 - [Evaluation Strategy](evaluation.md): job-analysis eval cases and quality gates.
 
 ## Scoring model

@@ -17,6 +17,8 @@ from app.db.models import (
     JobChatMessage,
     JobDetail,
     JobRecord,
+    LeetCodeProblem,
+    LeetCodeStatus,
     PrepPlan,
     ProfileProposal,
     ResumeVersion,
@@ -322,6 +324,9 @@ class JobRepository:
             schema_version=plan.schema_version,
             revision=plan.revision,
             provenance=plan.provenance,
+            workflow_graph=plan.workflow_graph,
+            workflow_run=plan.workflow_run,
+            evaluation=plan.evaluation,
             created_at=created_at,
             updated_at=updated_at,
         )
@@ -375,6 +380,83 @@ class JobRepository:
             conn.commit()
         plan.updated_at = updated_at
         return plan
+
+    def list_leetcode_problems(self) -> list[LeetCodeProblem]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, title, url, category, tags_json, note, status, created_at, updated_at
+                FROM leetcode_problems
+                ORDER BY updated_at DESC, id DESC
+                """
+            ).fetchall()
+        return [self._row_to_leetcode_problem(row) for row in rows]
+
+    def create_leetcode_problem(self, problem: LeetCodeProblem) -> LeetCodeProblem:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO leetcode_problems (title, url, category, tags_json, note, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    problem.title,
+                    problem.url,
+                    problem.category,
+                    json.dumps(problem.tags),
+                    problem.note,
+                    problem.status.value,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return problem.model_copy(update={"id": cursor.lastrowid, "created_at": now, "updated_at": now})
+
+    def update_leetcode_problem(self, problem_id: int, incoming: LeetCodeProblem) -> LeetCodeProblem | None:
+        existing = self.get_leetcode_problem(problem_id)
+        if existing is None:
+            return None
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE leetcode_problems
+                SET title = ?, url = ?, category = ?, tags_json = ?, note = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    incoming.title,
+                    incoming.url,
+                    incoming.category,
+                    json.dumps(incoming.tags),
+                    incoming.note,
+                    incoming.status.value,
+                    updated_at,
+                    problem_id,
+                ),
+            )
+            conn.commit()
+        return incoming.model_copy(update={"id": problem_id, "created_at": existing.created_at, "updated_at": updated_at})
+
+    def get_leetcode_problem(self, problem_id: int) -> LeetCodeProblem | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, title, url, category, tags_json, note, status, created_at, updated_at
+                FROM leetcode_problems
+                WHERE id = ?
+                """,
+                (problem_id,),
+            ).fetchone()
+        return self._row_to_leetcode_problem(row) if row else None
+
+    def delete_leetcode_problem(self, problem_id: int) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM leetcode_problems WHERE id = ?", (problem_id,))
+            conn.commit()
+        return cursor.rowcount > 0
 
     def create_agent_task(
         self,
@@ -679,6 +761,27 @@ class JobRepository:
             self._bootstrap_prep_plan_versions(conn)
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS leetcode_problems (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  title TEXT NOT NULL,
+                  url TEXT NOT NULL,
+                  category TEXT NOT NULL,
+                  tags_json TEXT NOT NULL,
+                  note TEXT,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_leetcode_problems_updated_at
+                ON leetcode_problems(updated_at)
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS agent_tasks (
                   id TEXT PRIMARY KEY,
                   type TEXT NOT NULL,
@@ -870,8 +973,24 @@ class JobRepository:
             schema_version=row[6],
             revision=row[7],
             provenance=json.loads(row[8]) if row[8] else None,
+            workflow_graph=payload.get("workflow_graph"),
+            workflow_run=payload.get("workflow_run"),
+            evaluation=payload.get("evaluation"),
             created_at=row[9],
             updated_at=row[10],
+        )
+
+    def _row_to_leetcode_problem(self, row: tuple) -> LeetCodeProblem:
+        return LeetCodeProblem(
+            id=row[0],
+            title=row[1],
+            url=row[2],
+            category=row[3],
+            tags=json.loads(row[4]) if row[4] else [],
+            note=row[5],
+            status=LeetCodeStatus(row[6]),
+            created_at=row[7],
+            updated_at=row[8],
         )
 
     def _row_to_agent_task(self, row: tuple) -> AgentTask:

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Clipboard,
+  Code2,
   Download,
   Eye,
   EyeOff,
@@ -28,6 +29,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 
+import { Badge, DataPill, EmptyState, MetricCard, PageHeader, Panel, SectionTitle } from "./components/ui";
 import {
   analyzeJob,
   applyProfileUpdates,
@@ -40,6 +42,8 @@ import {
   getBackgroundJobIngest,
   getJob,
   getProfile,
+  createLeetCodeProblem,
+  deleteLeetCodeProblem,
   generatePrepPlan,
   generateResumePdf,
   importPrepPlan,
@@ -47,6 +51,7 @@ import {
   listGlobalChatForSession,
   listGlobalChatSessions,
   listJobs,
+  listLeetCodeProblems,
   listPrepPlans,
   refineProfileProposal,
   saveAnalysisFeedback,
@@ -56,6 +61,7 @@ import {
   sendGlobalChat,
   startBackgroundJobIngest,
   streamJobChat,
+  updateLeetCodeProblem,
   updatePrepTask,
   updateJobAnalysis,
   updateJobStatus
@@ -73,6 +79,9 @@ import type {
   JobDetail,
   JobFit,
   JobRecord,
+  LeetCodeProblem,
+  LeetCodeProblemRequest,
+  LeetCodeStatus,
   ParsedJob,
   PrepPlan,
   ProfileProposalRefineResponse,
@@ -81,7 +90,7 @@ import type {
 import { buildTrackerSummary, titleCase } from "./utils";
 
 type InputMode = "link" | "paste";
-type AppView = "dashboard" | "analyze" | "applications" | "prep" | "resume" | "assistant" | "profile" | "settings";
+type AppView = "dashboard" | "analyze" | "applications" | "prep" | "leetcode" | "resume" | "assistant" | "profile" | "settings";
 type PrepSeed = { nonce: number; focus: string; jobId?: number | null };
 type ResumeSeed = { nonce: number; roleTitle: string; company?: string | null; jobId?: number | null; notes: string };
 type AnalysisRefreshContext = { jobId: number; title: string; sourceUrl: string };
@@ -94,6 +103,7 @@ const statuses: ApplicationStatus[] = [
   "rejected",
   "offer"
 ];
+const leetcodeStatuses: LeetCodeStatus[] = ["todo", "in_progress", "solved", "review"];
 
 export function App() {
   const queryClient = useQueryClient();
@@ -351,18 +361,19 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-ink lg:grid lg:grid-cols-[260px_1fr]">
+    <div className="min-h-screen bg-canvas text-ink lg:grid lg:grid-cols-[272px_1fr]">
       <AppSidebar activeView={activeView} onChange={setActiveView} />
 
       <div className="min-w-0">
-        <header className="border-b border-slate-200 bg-white">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
           <div className="flex flex-col gap-3 px-5 py-4 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs font-bold uppercase tracking-normal text-teal-800">CareerPilot</p>
-              <h1 className="mt-1 text-2xl font-bold tracking-normal">{viewTitle(activeView)}</h1>
+              <p className="text-xs font-semibold uppercase text-slate-500">CareerPilot Workspace</p>
+              <h1 className="mt-1 text-2xl font-semibold text-slate-950">{viewTitle(activeView)}</h1>
+              <p className="mt-1 text-sm text-slate-500">{viewSubtitle(activeView)}</p>
             </div>
             <a
-              className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-bold text-slate-950 hover:bg-slate-50"
+              className="secondary-button self-start lg:self-auto"
               href="/docs"
               target="_blank"
               rel="noreferrer"
@@ -373,7 +384,7 @@ export function App() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1540px] px-5 py-5 sm:px-8">
+        <main className="mx-auto max-w-[1580px] px-5 py-6 sm:px-8">
           {activeView === "dashboard" ? <DashboardView jobs={jobsQuery.data ?? []} onNavigate={setActiveView} /> : null}
           {activeView === "analyze" ? (
             <AnalyzeJobView
@@ -445,6 +456,7 @@ export function App() {
             />
           ) : null}
           {activeView === "prep" ? <PrepPlanView jobs={jobsQuery.data ?? []} seed={prepSeed} /> : null}
+          {activeView === "leetcode" ? <LeetCodeDashboard /> : null}
           {activeView === "resume" ? <ResumeView jobs={jobsQuery.data ?? []} seed={resumeSeed} /> : null}
           {activeView === "assistant" ? <GlobalAssistantView /> : null}
           {activeView === "profile" ? <ProfileView /> : null}
@@ -471,6 +483,7 @@ function AppSidebar({ activeView, onChange }: { activeView: AppView; onChange: (
     { view: "analyze", label: "Analyze Job", icon: <FileSearch size={18} /> },
     { view: "applications", label: "Applications", icon: <BriefcaseBusiness size={18} /> },
     { view: "prep", label: "Prep Plan", icon: <CalendarCheck size={18} /> },
+    { view: "leetcode", label: "Coding Practice", icon: <Code2 size={18} /> },
     { view: "resume", label: "Resume", icon: <FileText size={18} /> },
     { view: "assistant", label: "Assistant", icon: <Bot size={18} /> },
     { view: "profile", label: "Profile", icon: <FileText size={18} /> },
@@ -478,16 +491,17 @@ function AppSidebar({ activeView, onChange }: { activeView: AppView; onChange: (
   ];
 
   return (
-    <aside className="border-b border-slate-800 bg-slate-950 px-4 py-4 text-white lg:min-h-screen lg:border-b-0 lg:border-r">
-      <div className="mb-4">
-        <p className="text-xs font-bold uppercase tracking-normal text-teal-200">CareerPilot</p>
-        <p className="mt-1 text-sm text-slate-300">Local-first AI career workbench</p>
+    <aside className="border-b border-slate-200 bg-white px-4 py-4 text-slate-950 lg:sticky lg:top-0 lg:min-h-screen lg:border-b-0 lg:border-r">
+      <div className="mb-5 rounded-lg border border-slate-200 bg-slate-950 p-4 text-white">
+        <p className="text-xs font-semibold uppercase text-slate-400">CareerPilot</p>
+        <p className="mt-2 text-lg font-semibold">Career intelligence workbench</p>
+        <p className="mt-2 text-xs leading-5 text-slate-300">Local-first analysis, tracking, prep, and resume workflows.</p>
       </div>
       <nav className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-1" aria-label="Workspace navigation">
         {items.map((item) => (
           <button
-            className={`flex min-h-10 items-center gap-2 rounded-md px-3 text-left text-sm font-bold transition ${
-              activeView === item.view ? "bg-white text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+            className={`flex min-h-10 items-center gap-2 rounded-md border px-3 text-left text-sm font-semibold transition ${
+              activeView === item.view ? "border-slate-300 bg-slate-100 text-slate-950" : "border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-950"
             }`}
             key={item.view}
             type="button"
@@ -498,6 +512,10 @@ function AppSidebar({ activeView, onChange }: { activeView: AppView; onChange: (
           </button>
         ))}
       </nav>
+      <div className="mt-5 hidden rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 lg:block">
+        <p className="font-semibold text-slate-900">Demo posture</p>
+        <p className="mt-1">Backend-first product surface for showing agent workflow quality, not a marketing site.</p>
+      </div>
     </aside>
   );
 }
@@ -508,6 +526,7 @@ function viewTitle(view: AppView): string {
     analyze: "Analyze Job",
     applications: "Applications",
     prep: "Prep Plan",
+    leetcode: "Coding Practice",
     resume: "Resume",
     assistant: "Assistant",
     profile: "Personal Profile",
@@ -515,65 +534,95 @@ function viewTitle(view: AppView): string {
   }[view];
 }
 
+function viewSubtitle(view: AppView): string {
+  return {
+    dashboard: "Command center for applications, analysis, and preparation.",
+    analyze: "Fetch or paste a role, then review fit, evidence, and next actions.",
+    applications: "Track saved roles, statuses, analysis versions, and job-specific chat.",
+    prep: "Generate and maintain daily preparation plans.",
+    leetcode: "Track coding practice questions, tags, notes, and review status.",
+    resume: "Draft role-targeted resume PDFs from profile memory and saved jobs.",
+    assistant: "Ask across profile memory, saved jobs, and career strategy.",
+    profile: "Inspect and update the local memory CareerPilot uses.",
+    settings: "Configure local workflow and model behavior."
+  }[view];
+}
+
 function DashboardView({ jobs, onNavigate }: { jobs: JobRecord[]; onNavigate: (view: AppView) => void }) {
   const appliedCount = jobs.filter((job) => job.status === "applied").length;
   const activeCount = jobs.filter((job) => !["rejected", "offer"].includes(job.status)).length;
   const topTech = jobs.flatMap((job) => buildTrackerSummary(job).techStack).slice(0, 8);
+  const recentJobs = [...jobs].slice(0, 5);
+  const highPriorityCount = jobs.filter((job) => job.priority === "high").length;
+  const inProgressCount = jobs.filter((job) => ["saved", "interested", "applied", "interviewing"].includes(job.status)).length;
 
   return (
-    <div className="grid gap-4">
-      <section className="overflow-hidden rounded-lg border border-line bg-surface shadow-panel">
-        <div className="grid gap-5 p-5 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-normal text-teal-800">CareerPilot</p>
-            <h2 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">A local-first AI workbench for job search, resume targeting, and interview prep.</h2>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-700">
-              Analyze roles against your background, track applications, ask an assistant to compare opportunities, and build focused prep plans without sending your whole job-search workflow to a cloud database.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button className="primary-button" type="button" onClick={() => onNavigate("analyze")}>
-                <FileSearch size={18} />
-                Analyze a job
-              </button>
-              <button className="secondary-button" type="button" onClick={() => onNavigate("applications")}>
-                <BriefcaseBusiness size={18} />
-                View applications
-              </button>
-            </div>
-          </div>
-          <div className="rounded-lg border border-line bg-slate-50 p-4">
-            <h3 className="text-sm font-bold">How to use CareerPilot</h3>
-            <ol className="mt-3 space-y-3 text-sm leading-5 text-slate-700">
-              <li><strong>1.</strong> Add your profile or resume facts locally.</li>
-              <li><strong>2.</strong> Analyze a job from a link or pasted description.</li>
-              <li><strong>3.</strong> Save promising roles to Applications.</li>
-              <li><strong>4.</strong> Use job chat or the global Assistant for prep, gaps, and next actions.</li>
-            </ol>
-          </div>
-        </div>
-      </section>
+    <div className="grid gap-5">
+      <PageHeader
+        eyebrow="Command Center"
+        title="Manage the job search like an operating workflow"
+        subtitle="Review your application pipeline, surface repeated skill signals, and jump into the next analysis or preparation action."
+        actions={
+          <>
+            <button className="primary-button" type="button" onClick={() => onNavigate("analyze")}>
+              <FileSearch size={18} />
+              Analyze role
+            </button>
+            <button className="secondary-button" type="button" onClick={() => onNavigate("applications")}>
+              <BriefcaseBusiness size={18} />
+              Applications
+            </button>
+          </>
+        }
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader
-          icon={<LayoutDashboard size={20} />}
-          title="Next Best Actions"
-          subtitle="A lightweight home base for the job-search workflow."
-        />
-        <div className="mt-4 grid gap-3">
-          <DashboardCard title="Analyze a target role" body="Use Analyze Job for any role that looks relevant before adding more broad discovery." />
-          <DashboardCard title="Review active applications" body={`${activeCount} saved jobs are still active in your tracker.`} />
-          <DashboardCard title="Prepare from repeated gaps" body={topTech.length ? `Recent tech signals: ${Array.from(new Set(topTech)).slice(0, 5).join(", ")}.` : "Analyze a few roles to surface repeated skill gaps."} />
-        </div>
-      </section>
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader icon={<BriefcaseBusiness size={20} />} title="Tracker Snapshot" subtitle="Fast summary of local application state." />
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          <Metric label="Saved" value={jobs.length} />
-          <Metric label="Applied" value={appliedCount} />
-          <Metric label="Active" value={activeCount} />
-        </div>
-      </section>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Saved roles" value={jobs.length} detail="Tracked locally" />
+        <MetricCard label="Active pipeline" value={activeCount} detail={`${inProgressCount} need follow-up`} />
+        <MetricCard label="Applied" value={appliedCount} detail="Submitted applications" />
+        <MetricCard label="High priority" value={highPriorityCount} detail="Strong fit signals" />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+        <Panel>
+          <SectionTitle icon={<BriefcaseBusiness size={18} />} title="Recent Application Activity" subtitle="Current roles that are ready for review or follow-up." />
+          <div className="mt-4 divide-y divide-slate-200">
+            {recentJobs.length ? (
+              recentJobs.map((job) => {
+                const summary = buildTrackerSummary(job);
+                return (
+                  <button
+                    className="grid w-full gap-2 py-3 text-left first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_auto]"
+                    key={job.id}
+                    type="button"
+                    onClick={() => onNavigate("applications")}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-950">{job.title || "Untitled job"}</p>
+                      <p className="mt-1 text-xs text-slate-500">{job.company || "Unknown company"}{job.location ? ` · ${job.location}` : ""}</p>
+                      <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-600">{summary.business}</p>
+                    </div>
+                    <div className="flex items-center gap-2 md:justify-end">
+                      <Badge>{titleCase(job.status)}</Badge>
+                      <RecommendationBadge fit={{ score: job.fit_score, priority: job.priority } as JobFit} compact />
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <EmptyState text="No saved roles yet. Analyze a target job to start building the pipeline." />
+            )}
+          </div>
+        </Panel>
+
+        <Panel>
+          <SectionTitle icon={<LayoutDashboard size={18} />} title="Recommended Next Actions" subtitle="Small set of actions that keep the workflow moving." />
+          <div className="mt-4 grid gap-3">
+            <DashboardCard title="Analyze a target role" body="Use the analysis workspace before saving roles so the tracker stays curated." />
+            <DashboardCard title="Review active applications" body={`${activeCount} saved jobs are still active in your tracker.`} />
+            <DashboardCard title="Prepare from repeated gaps" body={topTech.length ? `Recent tech signals: ${Array.from(new Set(topTech)).slice(0, 5).join(", ")}.` : "Analyze a few roles to surface repeated skill gaps."} />
+          </div>
+        </Panel>
       </div>
     </div>
   );
@@ -581,28 +630,19 @@ function DashboardView({ jobs, onNavigate }: { jobs: JobRecord[]; onNavigate: (v
 
 function DashboardCard({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-md border border-line bg-white p-3">
-      <h3 className="text-sm font-bold">{title}</h3>
-      <p className="mt-1 text-sm leading-5 text-muted">{body}</p>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-line bg-slate-50 p-3">
-      <p className="text-xs font-bold uppercase tracking-normal text-muted">{label}</p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
+      <p className="mt-1 text-sm leading-5 text-slate-600">{body}</p>
     </div>
   );
 }
 
 function PlaceholderView({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
-    <section className="max-w-3xl rounded-lg border border-line bg-surface p-4 shadow-panel">
-      <SectionHeader icon={icon} title={title} subtitle="Planned workspace area." />
+    <Panel className="max-w-3xl">
+      <SectionTitle icon={icon} title={title} subtitle="Planned workspace area." />
       <p className="mt-4 text-sm leading-6 text-slate-700">{body}</p>
-    </section>
+    </Panel>
   );
 }
 
@@ -643,8 +683,8 @@ function PrepPlanView({ jobs, seed }: { jobs: JobRecord[]; seed: PrepSeed | null
 
   return (
     <div className="grid min-w-0 gap-4 2xl:grid-cols-[420px_minmax(0,1fr)]">
-      <section className="min-w-0 rounded-lg border border-line bg-surface p-4 shadow-panel 2xl:sticky 2xl:top-4 2xl:max-h-[calc(100vh-120px)] 2xl:overflow-y-auto">
-        <SectionHeader icon={<CalendarCheck size={20} />} title="Preparation Planner" subtitle="Generate or import a daily checklist for learning, LeetCode, and interview prep." />
+      <Panel className="min-w-0 2xl:sticky 2xl:top-28 2xl:max-h-[calc(100vh-140px)] 2xl:overflow-y-auto">
+        <SectionTitle icon={<CalendarCheck size={20} />} title="Preparation Planner" subtitle="Generate or import a daily checklist for learning, LeetCode, and interview prep." />
         <div className="mt-4 grid gap-3">
           <label className="label" htmlFor="prep-days">Timeline days</label>
           <input id="prep-days" className="input" type="number" min={1} max={90} value={timelineDays} onChange={(event) => setTimelineDays(Number(event.target.value))} />
@@ -658,8 +698,8 @@ function PrepPlanView({ jobs, seed }: { jobs: JobRecord[]; seed: PrepSeed | null
             ))}
           </select>
           <label className="label" htmlFor="prep-focus">Focus areas</label>
-          <textarea id="prep-focus" className="min-h-24 w-full rounded-md border border-line p-3 text-sm" value={focus} onChange={(event) => setFocus(event.target.value)} />
-          <label className="flex items-start gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+          <textarea id="prep-focus" className="min-h-24 w-full rounded-md border border-slate-300 p-3 text-sm" value={focus} onChange={(event) => setFocus(event.target.value)} />
+          <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
             <input className="mt-0.5 h-4 w-4 accent-teal-700" type="checkbox" checked={useLlm} onChange={(event) => setUseLlm(event.target.checked)} />
             <span>
               Use LLM planner
@@ -672,19 +712,19 @@ function PrepPlanView({ jobs, seed }: { jobs: JobRecord[]; seed: PrepSeed | null
           </button>
         </div>
 
-        <div className="mt-6 border-t border-line pt-4">
-          <h3 className="text-sm font-bold">Import Plan Text</h3>
+        <div className="mt-6 border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-semibold text-slate-950">Import Plan Text</h3>
           <input className="input mt-3" value={importTitle} onChange={(event) => setImportTitle(event.target.value)} />
-          <textarea className="mt-3 min-h-36 w-full rounded-md border border-line p-3 text-sm" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder="Paste your plan. Lines become checklist items; Day headings split days." />
+          <textarea className="mt-3 min-h-36 w-full rounded-md border border-slate-300 p-3 text-sm" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder="Paste your plan. Lines become checklist items; Day headings split days." />
           <button className="secondary-button mt-3" type="button" disabled={!importText.trim() || importMutation.isPending} onClick={() => importMutation.mutate()}>
             Import as checklist
           </button>
         </div>
         {(generateMutation.error || importMutation.error || plansQuery.error) ? <Feedback notice={null} error={formatUnknownError(generateMutation.error || importMutation.error || plansQuery.error)} /> : null}
-      </section>
+      </Panel>
 
-      <section className="min-w-0 rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader icon={<CheckCircle2 size={20} />} title="Daily Checklist" subtitle="Track preparation progress locally." />
+      <Panel className="min-w-0">
+        <SectionTitle icon={<CheckCircle2 size={20} />} title="Daily Checklist" subtitle="Track preparation progress locally." />
         <div className="mt-4 grid max-h-[calc(100vh-160px)] gap-4 overflow-y-auto pr-1">
           {plansQuery.isLoading ? <EmptyState text="Loading prep plans..." /> : null}
           {!plansQuery.isLoading && (plansQuery.data ?? []).length === 0 ? <EmptyState text="No prep plans yet." /> : null}
@@ -692,20 +732,20 @@ function PrepPlanView({ jobs, seed }: { jobs: JobRecord[]; seed: PrepSeed | null
             <PrepPlanCard key={plan.id} plan={plan} onToggle={(day, taskIndex, completed) => updateMutation.mutate({ planId: plan.id, day, taskIndex, completed })} />
           ))}
         </div>
-      </section>
+      </Panel>
     </div>
   );
 }
 
 function PrepPlanCard({ plan, onToggle }: { plan: PrepPlan; onToggle: (day: number, taskIndex: number, completed: boolean) => void }) {
   return (
-    <article className="min-w-0 rounded-lg border border-line bg-white p-3">
-      <h3 className="text-base font-bold">{plan.title}</h3>
+    <article className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+      <h3 className="text-base font-semibold text-slate-950">{plan.title}</h3>
       <p className="mt-1 text-xs text-muted">{plan.timeline_days} days · {plan.hours_per_day}h/day · {titleCase(plan.source)}</p>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         {plan.days.map((day) => (
-          <section className="min-w-0 rounded-md border border-line bg-slate-50 p-3" key={day.day}>
-            <h4 className="text-sm font-bold">{day.title}</h4>
+          <section className="min-w-0 rounded-md border border-slate-200 bg-slate-50 p-3" key={day.day}>
+            <h4 className="text-sm font-semibold text-slate-950">{day.title}</h4>
             <div className="mt-2 grid gap-2">
               {day.tasks.map((task, index) => (
                 <label className="flex items-start gap-2 text-sm leading-5" key={`${day.day}-${index}`}>
@@ -722,6 +762,238 @@ function PrepPlanCard({ plan, onToggle }: { plan: PrepPlan; onToggle: (day: numb
       </div>
     </article>
   );
+}
+
+function LeetCodeDashboard() {
+  const queryClient = useQueryClient();
+  const [title, setTitle] = useState("");
+  const [url, setUrl] = useState("");
+  const [category, setCategory] = useState("linked list");
+  const [tags, setTags] = useState("");
+  const [note, setNote] = useState("");
+  const [status, setStatus] = useState<LeetCodeStatus>("todo");
+  const [formError, setFormError] = useState<string | null>(null);
+  const problemsQuery = useQuery({ queryKey: ["leetcode-problems"], queryFn: listLeetCodeProblems });
+  const problems = problemsQuery.data ?? [];
+  const createMutation = useMutation({
+    mutationFn: () => createLeetCodeProblem(buildLeetCodeRequest({ title, url, category, tags, note, status })),
+    onSuccess: async () => {
+      setFormError(null);
+      setTitle("");
+      setUrl("");
+      setCategory("linked list");
+      setTags("");
+      setNote("");
+      setStatus("todo");
+      await queryClient.invalidateQueries({ queryKey: ["leetcode-problems"] });
+    }
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ problem, nextStatus }: { problem: LeetCodeProblem; nextStatus: LeetCodeStatus }) =>
+      updateLeetCodeProblem(problem.id, {
+        title: problem.title,
+        url: problem.url,
+        category: problem.category,
+        tags: problem.tags,
+        note: problem.note,
+        status: nextStatus
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["leetcode-problems"] })
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (problemId: number) => deleteLeetCodeProblem(problemId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["leetcode-problems"] })
+  });
+  const solvedCount = problems.filter((problem) => problem.status === "solved").length;
+  const reviewCount = problems.filter((problem) => problem.status === "review").length;
+  const activeCount = problems.filter((problem) => problem.status === "todo" || problem.status === "in_progress").length;
+  const topCategories = Array.from(new Set(problems.map((problem) => problem.category).filter(Boolean))).slice(0, 6);
+  const topTags = Array.from(new Set(problems.flatMap((problem) => problem.tags))).slice(0, 10);
+
+  function submitProblem() {
+    if (!title.trim() || !url.trim() || !category.trim()) {
+      setFormError("Title, link, and category are required.");
+      return;
+    }
+    const normalizedUrl = normalizePracticeUrl(url);
+    if (!normalizedUrl) {
+      setFormError("Enter a valid practice problem link, for example https://leetcode.com/problems/two-sum/.");
+      return;
+    }
+    setUrl(normalizedUrl);
+    setFormError(null);
+    createMutation.mutate();
+  }
+
+  return (
+    <div className="grid gap-5">
+      <PageHeader
+        eyebrow="Coding Practice"
+        title="Coding Practice Dashboard"
+        subtitle="Track interview practice questions from LeetCode, HackerRank, NeetCode, company prep pages, or any useful source."
+      />
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Tracked" value={problems.length} detail="Saved questions" />
+        <MetricCard label="Active" value={activeCount} detail="Todo or in progress" />
+        <MetricCard label="Solved" value={solvedCount} detail="Completed once" />
+        <MetricCard label="Review" value={reviewCount} detail="Needs revisit" />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <Panel className="xl:sticky xl:top-28 xl:max-h-[calc(100vh-140px)] xl:overflow-y-auto">
+          <SectionTitle icon={<Code2 size={20} />} title="Add Practice Question" subtitle="Capture enough context to review the pattern later." />
+          <div className="mt-4 grid gap-3">
+            <label className="label" htmlFor="leetcode-title">Question title</label>
+            <input id="leetcode-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Two Sum" />
+            <label className="label" htmlFor="leetcode-url">Question link</label>
+            <input id="leetcode-url" className="input" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://leetcode.com/problems/two-sum/" />
+            <label className="label" htmlFor="leetcode-category">Primary category</label>
+            <input id="leetcode-category" className="input" value={category} onChange={(event) => setCategory(event.target.value)} placeholder="two pointer, linked list, graph..." />
+            <label className="label" htmlFor="leetcode-tags">Tags</label>
+            <input id="leetcode-tags" className="input" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="hash map, array, easy" />
+            <label className="label" htmlFor="leetcode-status">Status</label>
+            <select id="leetcode-status" className="select" value={status} onChange={(event) => setStatus(event.target.value as LeetCodeStatus)}>
+              {leetcodeStatuses.map((item) => (
+                <option key={item} value={item}>{formatLeetCodeStatus(item)}</option>
+              ))}
+            </select>
+            <label className="label" htmlFor="leetcode-note">Personal note</label>
+            <textarea
+              id="leetcode-note"
+              className="min-h-28 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Key trick, mistake, recurrence, edge case, or revisit note..."
+            />
+            {formError || createMutation.error ? <Feedback notice={null} error={formError ?? formatUnknownError(createMutation.error)} /> : null}
+            <button className="primary-button" type="button" disabled={!title.trim() || !url.trim() || !category.trim() || createMutation.isPending} onClick={submitProblem}>
+              {createMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : <Code2 size={18} />}
+              Add question
+            </button>
+          </div>
+        </Panel>
+
+        <div className="grid gap-5">
+          <Panel>
+            <SectionTitle icon={<LayoutDashboard size={20} />} title="Practice Signals" subtitle="Quick view of categories and tags you are actively training." />
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <SignalGroup title="Categories" values={topCategories} empty="No categories yet." />
+              <SignalGroup title="Tags" values={topTags} empty="No tags yet." />
+            </div>
+          </Panel>
+
+          <Panel>
+            <SectionTitle icon={<CheckCircle2 size={20} />} title="Question Tracker" subtitle="Use status as a lightweight spaced-review queue." />
+            <div className="mt-4 grid gap-3">
+              {problemsQuery.isLoading ? <EmptyState text="Loading practice questions..." /> : null}
+              {!problemsQuery.isLoading && problems.length === 0 ? <EmptyState text="No coding practice questions yet." /> : null}
+              {problems.map((problem) => (
+                <LeetCodeProblemCard
+                  key={problem.id}
+                  problem={problem}
+                  pending={updateMutation.isPending || deleteMutation.isPending}
+                  onDelete={() => deleteMutation.mutate(problem.id)}
+                  onStatusChange={(nextStatus) => updateMutation.mutate({ problem, nextStatus })}
+                />
+              ))}
+              {(problemsQuery.error || updateMutation.error || deleteMutation.error) ? (
+                <Feedback notice={null} error={formatUnknownError(problemsQuery.error || updateMutation.error || deleteMutation.error)} />
+              ) : null}
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignalGroup({ title, values, empty }: { title: string; values: string[]; empty: string }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {values.length ? values.map((value) => <DataPill key={value}>{value}</DataPill>) : <span className="text-sm text-slate-500">{empty}</span>}
+      </div>
+    </div>
+  );
+}
+
+function LeetCodeProblemCard({
+  problem,
+  pending,
+  onDelete,
+  onStatusChange
+}: {
+  problem: LeetCodeProblem;
+  pending: boolean;
+  onDelete: () => void;
+  onStatusChange: (status: LeetCodeStatus) => void;
+}) {
+  return (
+    <article className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="min-w-0">
+          <a className="text-base font-semibold text-slate-950 underline-offset-4 hover:underline" href={problem.url} target="_blank" rel="noreferrer">
+            {problem.title}
+          </a>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Badge>{formatLeetCodeStatus(problem.status)}</Badge>
+            <DataPill>{problem.category}</DataPill>
+            {problem.tags.map((tag) => <DataPill key={tag}>{tag}</DataPill>)}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-start gap-2 lg:justify-end">
+          <select className="select" value={problem.status} disabled={pending} onChange={(event) => onStatusChange(event.target.value as LeetCodeStatus)}>
+            {leetcodeStatuses.map((item) => (
+              <option key={item} value={item}>{formatLeetCodeStatus(item)}</option>
+            ))}
+          </select>
+          <button className="danger-button" type="button" disabled={pending} onClick={onDelete}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </div>
+      </div>
+      {problem.note ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{problem.note}</p> : null}
+    </article>
+  );
+}
+
+function buildLeetCodeRequest(values: {
+  title: string;
+  url: string;
+  category: string;
+  tags: string;
+  note: string;
+  status: LeetCodeStatus;
+}): LeetCodeProblemRequest {
+  return {
+    title: values.title.trim(),
+    url: normalizePracticeUrl(values.url) ?? values.url.trim(),
+    category: values.category.trim(),
+    tags: values.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+    note: values.note.trim() || null,
+    status: values.status
+  };
+}
+
+function normalizePracticeUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function formatLeetCodeStatus(status: LeetCodeStatus): string {
+  return status === "in_progress" ? "In progress" : titleCase(status);
 }
 
 function ResumeView({ jobs, seed }: { jobs: JobRecord[]; seed: ResumeSeed | null }) {
@@ -753,8 +1025,8 @@ function ResumeView({ jobs, seed }: { jobs: JobRecord[]; seed: ResumeSeed | null
   }, [seed]);
 
   return (
-    <section className="max-w-3xl rounded-lg border border-line bg-surface p-4 shadow-panel">
-      <SectionHeader icon={<FileText size={20} />} title="Resume Generator" subtitle="Generate a role-targeted PDF draft from local profile memory and optional saved job context." />
+    <Panel className="max-w-4xl">
+      <SectionTitle icon={<FileText size={20} />} title="Resume Generator" subtitle="Generate a role-targeted PDF draft from local profile memory and optional saved job context." />
       <div className="mt-4 grid gap-3">
         <label className="label" htmlFor="resume-role">Target role</label>
         <input id="resume-role" className="input" value={roleTitle} onChange={(event) => setRoleTitle(event.target.value)} />
@@ -768,8 +1040,8 @@ function ResumeView({ jobs, seed }: { jobs: JobRecord[]; seed: ResumeSeed | null
           ))}
         </select>
         <label className="label" htmlFor="resume-notes">Extra positioning notes</label>
-        <textarea id="resume-notes" className="min-h-36 w-full rounded-md border border-line p-3 text-sm" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste role-specific notes, keywords, or resume emphasis you want included..." />
-        <label className="flex items-start gap-2 rounded-md border border-line bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+        <textarea id="resume-notes" className="min-h-36 w-full rounded-md border border-slate-300 p-3 text-sm" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Paste role-specific notes, keywords, or resume emphasis you want included..." />
+        <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
           <input className="mt-0.5 h-4 w-4 accent-teal-700" type="checkbox" checked={useLlm} onChange={(event) => setUseLlm(event.target.checked)} />
           <span>
             Use LLM resume writer
@@ -782,7 +1054,7 @@ function ResumeView({ jobs, seed }: { jobs: JobRecord[]; seed: ResumeSeed | null
           Generate PDF
         </button>
       </div>
-    </section>
+    </Panel>
   );
 }
 
@@ -861,8 +1133,8 @@ function ProfileView() {
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(420px,0.85fr)_minmax(520px,1.15fr)]">
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader icon={<FileText size={20} />} title="Personal Profile" subtitle="What CareerPilot currently knows about your background and preferences." />
+      <Panel>
+        <SectionTitle icon={<FileText size={20} />} title="Personal Profile" subtitle="What CareerPilot currently knows about your background and preferences." />
         {profileQuery.isLoading ? <EmptyState text="Loading profile memory..." /> : null}
         {profileQuery.error ? (
           <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
@@ -871,19 +1143,19 @@ function ProfileView() {
         ) : null}
         {profileQuery.data ? (
           <div className="mt-4">
-            <p className="mb-3 inline-flex rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+            <DataPill className="mb-3">
               Source: {profileQuery.data.source === "local" ? "Private local profile" : "Example template"}
-            </p>
+            </DataPill>
             <ProfileSections profile={profileQuery.data.profile} />
           </div>
         ) : null}
-      </section>
+      </Panel>
 
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader icon={<FileText size={20} />} title="Resume Portal" subtitle="Upload or paste resume text to propose profile-memory updates." />
+      <Panel>
+        <SectionTitle icon={<FileText size={20} />} title="Resume Portal" subtitle="Upload or paste resume text to propose profile-memory updates." />
         <div className="mt-4 space-y-3">
           <input
-            className="block w-full rounded-md border border-line bg-white p-2 text-sm"
+            className="block w-full rounded-md border border-slate-300 bg-white p-2 text-sm"
             type="file"
             accept=".md,.txt,.pdf"
             onChange={(event) => {
@@ -894,7 +1166,7 @@ function ProfileView() {
             }}
           />
           <textarea
-            className="min-h-64 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+            className="min-h-64 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
             value={resumeText}
             onChange={(event) => {
               setResumeText(event.target.value);
@@ -932,7 +1204,7 @@ function ProfileView() {
             }}
           />
         ) : null}
-      </section>
+      </Panel>
     </div>
   );
 }
@@ -945,8 +1217,8 @@ function ProfileSections({ profile }: { profile: Record<string, unknown> }) {
   return (
     <div className="grid gap-3">
       {entries.map(([key, value]) => (
-        <section className="rounded-md border border-line bg-white p-3" key={key}>
-          <h3 className="text-sm font-bold">{titleCase(key)}</h3>
+        <section className="rounded-lg border border-slate-200 bg-white p-3" key={key}>
+          <h3 className="text-sm font-semibold text-slate-950">{titleCase(key)}</h3>
           <ProfileValue value={value} />
         </section>
       ))}
@@ -956,10 +1228,19 @@ function ProfileSections({ profile }: { profile: Record<string, unknown> }) {
 
 function ProfileValue({ value }: { value: unknown }) {
   if (Array.isArray(value)) {
+    if (value.length > 0 && value.every((item) => item && typeof item === "object" && !Array.isArray(item))) {
+      return (
+        <div className="mt-3 grid gap-3">
+          {value.map((item, index) => (
+            <ProfileObjectCard key={index} value={item as Record<string, unknown>} />
+          ))}
+        </div>
+      );
+    }
     return (
       <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-5 text-slate-700">
         {value.map((item, index) => (
-          <li key={index}>{String(item)}</li>
+          <li key={index}>{formatProfilePrimitive(item)}</li>
         ))}
       </ul>
     );
@@ -969,14 +1250,59 @@ function ProfileValue({ value }: { value: unknown }) {
       <div className="mt-2 grid gap-2">
         {Object.entries(value as Record<string, unknown>).map(([key, nested]) => (
           <div key={key}>
-            <p className="text-xs font-bold uppercase tracking-normal text-muted">{titleCase(key)}</p>
+            <p className="text-xs font-semibold uppercase text-slate-500">{titleCase(key)}</p>
             <ProfileValue value={nested} />
           </div>
         ))}
       </div>
     );
   }
-  return <p className="mt-2 text-sm leading-5 text-slate-700">{String(value ?? "Not set")}</p>;
+  return <p className="mt-2 text-sm leading-5 text-slate-700">{formatProfilePrimitive(value)}</p>;
+}
+
+function ProfileObjectCard({ value }: { value: Record<string, unknown> }) {
+  const title = profileObjectTitle(value);
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      {title ? <p className="text-sm font-semibold text-slate-950">{title}</p> : null}
+      <div className={title ? "mt-2 grid gap-2" : "grid gap-2"}>
+        {Object.entries(value)
+          .filter(([key]) => !["name", "title", "company", "school", "institution"].includes(key))
+          .map(([key, nested]) => (
+            <div key={key}>
+              <p className="text-xs font-semibold uppercase text-slate-500">{titleCase(key)}</p>
+              <ProfileValue value={nested} />
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function profileObjectTitle(value: Record<string, unknown>): string | null {
+  for (const key of ["name", "title", "company", "school", "institution"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function formatProfilePrimitive(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "Not set";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
 }
 
 function ResumeExtractionResult({
@@ -1004,13 +1330,13 @@ function ResumeExtractionResult({
 }) {
   const hasUpdates = Object.values(extraction.proposed_updates).some((values) => values.length > 0);
   return (
-    <div className="mt-4 rounded-lg border border-line bg-slate-50 p-3">
-      <h3 className="text-sm font-bold">Proposed Profile Updates</h3>
+    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <h3 className="text-sm font-semibold text-slate-950">Proposed Profile Updates</h3>
       <p className="mt-1 text-sm leading-5 text-muted">{extraction.summary}</p>
       <div className="mt-3 grid gap-3">
         {Object.entries(extraction.proposed_updates).map(([key, values]) => (
-          <section className="rounded-md border border-line bg-white p-3" key={key}>
-            <h4 className="text-sm font-bold">{titleCase(key)}</h4>
+          <section className="rounded-md border border-slate-200 bg-white p-3" key={key}>
+            <h4 className="text-sm font-semibold text-slate-950">{titleCase(key)}</h4>
             {values.length ? (
               <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-5 text-slate-700">
                 {values.map((value) => (
@@ -1024,8 +1350,8 @@ function ResumeExtractionResult({
         ))}
       </div>
       {hasUpdates ? (
-        <div className="mt-4 rounded-md border border-line bg-white p-3">
-          <h4 className="text-sm font-bold">Proposal Assistant</h4>
+        <div className="mt-4 rounded-md border border-slate-200 bg-white p-3">
+          <h4 className="text-sm font-semibold text-slate-950">Proposal Assistant</h4>
           <p className="mt-1 text-xs leading-5 text-muted">
             Ask for changes before saving, for example: `remove Kubernetes` or `add Java to technical_strengths`.
           </p>
@@ -1035,7 +1361,7 @@ function ResumeExtractionResult({
               <div className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`} key={index}>
                 <div
                   className={`max-w-[92%] rounded-md px-3 py-2 text-sm leading-5 ${
-                    message.role === "user" ? "bg-slate-100 text-slate-900" : "border border-line bg-white text-slate-800"
+                    message.role === "user" ? "border border-slate-300 bg-slate-100 text-slate-900" : "border border-slate-200 bg-white text-slate-800"
                   }`}
                 >
                   <MarkdownMessage content={message.content} />
@@ -1051,7 +1377,7 @@ function ResumeExtractionResult({
           ) : null}
           <div className="mt-3 flex flex-col gap-2">
             <textarea
-              className="min-h-20 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+              className="min-h-20 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
               value={chatMessage}
               onChange={(event) => onChatMessageChange(event.target.value)}
               placeholder="Ask the assistant to add, remove, clarify, or reclassify proposed profile facts..."
@@ -1113,7 +1439,7 @@ function GlobalAssistantView() {
   });
   const chatMutation = useMutation({
     mutationFn: (content: string) =>
-      sendGlobalChat({ message: content, session_id: activeSessionId, use_llm: true, use_web_search: useWebSearch }),
+      sendGlobalChat({ message: content, session_id: activeSessionId, use_web_search: useWebSearch }),
     onSuccess: async (response) => {
       setMessage("");
       setActiveSessionId(response.session.id);
@@ -1171,10 +1497,10 @@ function GlobalAssistantView() {
   const visibleActionTaskIds = activeSessionId === null ? [] : actionTasksBySession[activeSessionId] ?? [];
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[280px_minmax(520px,1fr)]">
-      <div className="rounded-lg border border-line bg-surface p-3 shadow-panel xl:h-[calc(100vh-150px)] xl:min-h-[620px] xl:overflow-y-auto">
+    <section className="grid gap-5 xl:grid-cols-[300px_minmax(520px,1fr)]">
+      <Panel className="xl:h-[calc(100vh-150px)] xl:min-h-[620px] xl:overflow-y-auto" padding="compact">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-bold">Chats</h2>
+          <h2 className="text-sm font-semibold text-slate-950">Chats</h2>
           <button className="secondary-button px-2" type="button" onClick={startFreshChat}>
             <MessageCircle size={16} />
             New
@@ -1196,16 +1522,16 @@ function GlobalAssistantView() {
             />
           ))}
         </div>
-      </div>
+      </Panel>
 
-      <div className="flex rounded-lg border border-line bg-surface p-4 shadow-panel xl:h-[calc(100vh-150px)] xl:min-h-[620px] xl:flex-col">
+      <Panel className="flex xl:h-[calc(100vh-150px)] xl:min-h-[620px] xl:flex-col">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="text-xs font-bold uppercase tracking-normal text-muted">Assistant Chat</p>
-            <h2 className="mt-1 text-lg font-bold">{activeSession?.title ?? "New chat"}</h2>
+            <p className="text-xs font-semibold uppercase text-slate-500">Assistant Chat</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">{activeSession?.title ?? "New chat"}</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-bold text-slate-700">
+            <label className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
               <input
                 className="h-4 w-4 accent-teal-700"
                 type="checkbox"
@@ -1225,15 +1551,15 @@ function GlobalAssistantView() {
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
           {activeSessionId !== null && chatQuery.isLoading ? <EmptyState text="Loading conversation..." /> : null}
           {!chatQuery.isLoading && visibleMessages.length === 0 ? (
-            <div className="rounded-lg border border-line bg-slate-50 p-4">
-              <SectionHeader
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <SectionTitle
                 icon={<Bot size={20} />}
                 title="Global Assistant"
                 subtitle="Ask across your profile, saved jobs, application statuses, and local chat history."
               />
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 {sessions.length > 0 ? (
-                  <div className="rounded-md border border-line bg-white p-3 text-sm leading-5 text-muted sm:col-span-2">
+                  <div className="rounded-md border border-slate-200 bg-white p-3 text-sm leading-5 text-slate-500 sm:col-span-2">
                     Start a fresh chat with one of the prompts below, or select a saved conversation from the chat history.
                   </div>
                 ) : null}
@@ -1261,9 +1587,9 @@ function GlobalAssistantView() {
           </div>
         ) : null}
 
-        <div className="sticky bottom-0 -mx-4 mt-3 flex flex-col gap-2 border-t border-line bg-surface/95 px-4 pb-1 pt-3 backdrop-blur">
+        <div className="sticky bottom-0 -mx-4 mt-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-4 pb-1 pt-3 backdrop-blur">
           <textarea
-            className="min-h-28 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+            className="min-h-28 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Ask about saved jobs, prep priorities, skill gaps, or career strategy..."
@@ -1278,7 +1604,7 @@ function GlobalAssistantView() {
             </button>
           </div>
         </div>
-      </div>
+      </Panel>
     </section>
   );
 }
@@ -1295,7 +1621,7 @@ function ChatSessionButton({
   onSelect: () => void;
 }) {
   return (
-    <div className={`group grid grid-cols-[1fr_auto] items-center rounded-md ${active ? "bg-slate-950 text-white" : "hover:bg-slate-100"}`}>
+    <div className={`group grid grid-cols-[1fr_auto] items-center rounded-md border ${active ? "border-slate-900 bg-slate-950 text-white" : "border-transparent hover:border-slate-200 hover:bg-slate-50"}`}>
       <button className="min-h-10 truncate px-3 text-left text-sm font-semibold" type="button" onClick={onSelect} title={session.title}>
         {session.title}
       </button>
@@ -1373,12 +1699,12 @@ function AnalyzeJobView({
   onGenerateResume: (analysis: JobAnalysisResponse) => void;
 }) {
   return (
-    <div className="grid gap-4 2xl:grid-cols-[minmax(380px,460px)_minmax(720px,1fr)]">
-      <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
-        <SectionHeader icon={<FileSearch size={20} />} title="Analyze a Job" subtitle="Choose the input path that matches what you have." />
+    <div className="grid gap-5 2xl:grid-cols-[minmax(360px,440px)_minmax(760px,1fr)]">
+      <Panel className="2xl:sticky 2xl:top-28 2xl:max-h-[calc(100vh-140px)] 2xl:overflow-y-auto">
+        <SectionTitle icon={<FileSearch size={20} />} title="Analyze Source" subtitle="Fetch from a job URL or paste a clean description." />
 
         <div className="mt-4 space-y-4">
-          <div className="grid grid-cols-2 rounded-md border border-line bg-slate-100 p-1" role="tablist" aria-label="Job input mode">
+          <div className="grid grid-cols-2 rounded-md border border-slate-200 bg-slate-100 p-1" role="tablist" aria-label="Job input mode">
             <ModeButton active={inputMode === "link"} icon={<Link size={16} />} label="Job Link" onClick={() => setInputMode("link")} />
             <ModeButton active={inputMode === "paste"} icon={<Clipboard size={16} />} label="Paste Text" onClick={() => setInputMode("paste")} />
           </div>
@@ -1452,7 +1778,7 @@ function AnalyzeJobView({
             ) : null}
           </div>
         </div>
-      </section>
+      </Panel>
 
       {analysis ? (
         <AnalysisResult
@@ -1486,17 +1812,7 @@ function SectionHeader({
   title: string;
   subtitle: string;
 }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-teal-50 text-teal-800">
-        {icon}
-      </div>
-      <div>
-        <h2 className="text-xl font-bold">{title}</h2>
-        <p className="mt-1 text-sm leading-5 text-muted">{subtitle}</p>
-      </div>
-    </div>
-  );
+  return <SectionTitle icon={icon} title={title} subtitle={subtitle} />;
 }
 
 function ModeButton({
@@ -1512,8 +1828,8 @@ function ModeButton({
 }) {
   return (
     <button
-      className={`min-h-10 rounded px-3 text-sm font-bold transition ${
-        active ? "bg-white text-teal-800 shadow-sm" : "text-slate-600 hover:text-slate-900"
+      className={`min-h-10 rounded px-3 text-sm font-semibold transition ${
+        active ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-900"
       }`}
       type="button"
       role="tab"
@@ -1535,7 +1851,7 @@ function Feedback({ notice, error }: { notice: string | null; error: string | nu
   return (
     <div
       className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${
-        error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-teal-100 bg-teal-50 text-teal-800"
+        error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"
       }`}
     >
       {error ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
@@ -1549,42 +1865,72 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
   const savedJob = task.artifacts.saved_job;
   const workflowGraph = task.artifacts.workflow_graph;
   const traceEvents = task.artifacts.workflow_run?.trace_events ?? [];
-  const tone =
+  const completedSteps = task.steps.filter((step) => step.status === "completed").length;
+  const failedSteps = task.steps.filter((step) => step.status === "failed").length;
+  const totalSteps = Math.max(task.steps.length, workflowGraph?.nodes.length ?? 0, 1);
+  const progress = task.status === "completed" ? 100 : task.status === "failed" ? Math.round((completedSteps / totalSteps) * 100) : Math.max(8, Math.round((completedSteps / totalSteps) * 100));
+  const currentStep = task.steps.find((step) => step.status === "running") ?? task.steps.find((step) => step.status === "queued") ?? task.steps[task.steps.length - 1];
+  const statusTone =
     task.status === "completed"
-      ? "border-teal-100 bg-teal-50 text-teal-800"
+      ? "text-emerald-700"
       : task.status === "failed"
-        ? "border-rose-200 bg-rose-50 text-rose-700"
-        : "border-amber-100 bg-amber-50 text-amber-700";
+        ? "text-rose-700"
+        : "text-amber-800";
   return (
-    <div className={`rounded-md border px-3 py-2 text-sm ${tone}`}>
-      <div className="flex items-center gap-2 font-bold">
-        {task.status === "completed" ? <CheckCircle2 size={18} /> : task.status === "failed" ? <AlertCircle size={18} /> : <Loader2 className="animate-spin" size={18} />}
-        <span>{titleCase(task.status)} agent task</span>
+    <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className={`flex items-center gap-2 font-semibold ${statusTone}`}>
+            {task.status === "completed" ? <CheckCircle2 size={18} /> : task.status === "failed" ? <AlertCircle size={18} /> : <Loader2 className="animate-spin" size={18} />}
+            <span>{titleCase(task.status)} analysis workflow</span>
+          </div>
+          <p className="mt-1 truncate text-xs text-slate-500" title={url}>{url}</p>
+        </div>
+        <Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>
+          {completedSteps}/{totalSteps} steps
+        </Badge>
       </div>
-      <p className="mt-1 break-all text-xs leading-5">{url}</p>
-      {workflowGraph ? <WorkflowGraphPreview graph={workflowGraph} fallbackSteps={task.steps} /> : null}
+
+      <div className="mt-3">
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={`h-full rounded-full transition-all ${task.status === "failed" ? "bg-rose-500" : task.status === "completed" ? "bg-emerald-500" : "bg-amber-500"}`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+          <span>{currentStep ? `Current: ${currentStep.name.replace(/_/g, " ")}` : "Preparing workflow"}</span>
+          {failedSteps > 0 ? <span className="font-semibold text-rose-700">{failedSteps} failed</span> : <span>{progress}%</span>}
+        </div>
+      </div>
+
       {task.steps.length > 0 ? (
-        <ol className="mt-2 space-y-1 text-xs leading-5">
+        <ol className="mt-3 grid gap-2 text-xs leading-5">
           {task.steps.map((step) => (
-            <li className="flex items-start gap-2" key={`${step.name}-${step.started_at ?? step.status}`}>
-              <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-              <span>
-                <span className="font-bold">{step.name.replace(/_/g, " ")}</span>
-                <span className="ml-1">({step.status})</span>
-                {step.summary ? <span className="block font-normal">{step.summary}</span> : null}
-                {step.error ? <span className="block font-semibold">{step.error}</span> : null}
-              </span>
+            <li className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 sm:grid-cols-[auto_minmax(0,1fr)]" key={`${step.name}-${step.started_at ?? step.status}`}>
+              <StatusPill status={step.status} />
+              <div className="min-w-0">
+                <span className="font-semibold text-slate-900">{step.name.replace(/_/g, " ")}</span>
+                {step.summary ? <span className="block text-slate-600">{step.summary}</span> : null}
+                {step.error ? <span className="block font-semibold text-rose-700">{step.error}</span> : null}
+              </div>
             </li>
           ))}
         </ol>
       ) : null}
-      {traceEvents.length > 0 ? <WorkflowTraceTimeline events={traceEvents} /> : null}
+      {workflowGraph ? <WorkflowGraphPreview graph={workflowGraph} fallbackSteps={task.steps} /> : null}
+      {traceEvents.length > 0 ? (
+        <details className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-2">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700">Trace events</summary>
+          <WorkflowTraceTimeline events={traceEvents} />
+        </details>
+      ) : null}
       {savedJob ? (
-        <p className="mt-1 text-xs font-semibold">
+        <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
           Saved {savedJob.title || "Untitled job"} as {applicationTypeLabel(savedJob.application_type)}.
         </p>
       ) : null}
-      {task.error ? <p className="mt-1 text-xs font-semibold">{task.error}</p> : null}
+      {task.error ? <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{task.error}</p> : null}
     </div>
   );
 }
@@ -1654,11 +2000,11 @@ function WorkflowTraceTimeline({ events }: { events: NonNullable<AgentTask["arti
 function StatusPill({ status }: { status: string }) {
   const className =
     status === "completed"
-      ? "border-teal-200 bg-teal-50 text-teal-700"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
       : status === "failed" || status === "blocked"
         ? "border-rose-200 bg-rose-50 text-rose-700"
         : status === "running"
-          ? "border-amber-200 bg-amber-50 text-amber-700"
+          ? "border-amber-200 bg-amber-50 text-amber-800"
           : "border-slate-200 bg-slate-50 text-slate-600";
   return (
     <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-normal ${className}`}>
@@ -1930,7 +2276,6 @@ function AnalysisResult({
         },
         message: content,
         history: messages,
-        use_llm: true,
         use_web_search: useWebSearch
       }),
     onSuccess: (response) => {
@@ -1974,13 +2319,13 @@ function AnalysisResult({
   }
 
   return (
-    <section className="flex max-h-[calc(100vh-150px)] min-h-[680px] flex-col rounded-lg border border-line bg-slate-50 shadow-panel">
-      <div className="border-b border-line pb-3">
+    <section className="flex max-h-[calc(100vh-140px)] min-h-[720px] flex-col rounded-lg border border-slate-200 bg-white shadow-panel">
+      <div className="border-b border-slate-200 bg-white pb-3">
         <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-normal text-teal-800">Analysis review workspace</p>
-            <h3 className="mt-1 text-lg font-bold">{job.title || "Untitled job"}</h3>
-            <p className="mt-1 text-sm text-muted">
+            <p className="text-xs font-semibold uppercase text-slate-500">Analysis Review</p>
+            <h3 className="mt-1 text-xl font-semibold text-slate-950">{job.title || "Untitled job"}</h3>
+            <p className="mt-1 text-sm text-slate-500">
               {job.company || "Unknown company"}
               {job.location ? ` · ${job.location}` : ""}
             </p>
@@ -2008,16 +2353,16 @@ function AnalysisResult({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="rounded-lg border border-line bg-white p-3">
-          <h4 className="text-sm font-bold">Decision Summary</h4>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <h4 className="text-sm font-semibold text-slate-950">Decision Summary</h4>
           <p className="mt-2 text-sm leading-6 text-slate-700">{fit.summary}</p>
           {fit.transition_notes.length ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {fit.transition_notes.slice(0, 3).map((note, index) => (
-                <span className="rounded-md bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-800" key={`transition-${index}`}>
+                <DataPill key={`transition-${index}`}>
                   {note}
-                </span>
+                </DataPill>
               ))}
             </div>
           ) : null}
@@ -2033,13 +2378,14 @@ function AnalysisResult({
           ))}
         </div>
 
-        <details className="mt-4 rounded-lg border border-line bg-white p-3">
-          <summary className="cursor-pointer text-sm font-bold text-slate-800">Debug details</summary>
+        <details className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-800">Execution details</summary>
           <div className="mt-3 grid gap-2 text-xs leading-5 text-muted">
             <p>{analysis.parser_used === "llm" ? "Parsed with LLM structured extraction." : parserFallbackLabel(analysis)}</p>
             <p>Semantic fit evaluated by LLM.</p>
             <p>{analysis.guidance_used === "llm" ? "Application guidance generated by LLM." : guidanceFallbackLabel(analysis)}</p>
           </div>
+          <AnalysisWorkflowTrace analysis={analysis} />
         </details>
 
         <AnalysisFeedbackControls
@@ -2052,8 +2398,6 @@ function AnalysisResult({
           saved={feedbackMutation.isSuccess}
           error={feedbackMutation.error}
         />
-
-        <AnalysisWorkflowTrace analysis={analysis} />
 
         <AssistantChatPanel
           chatError={chatMutation.error}
@@ -2079,11 +2423,11 @@ function AnalysisWorkflowTrace({ analysis }: { analysis: JobAnalysisResponse }) 
     return null;
   }
   return (
-    <section className="mt-4 rounded-lg border border-line bg-white p-3">
+    <section className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h4 className="text-sm font-bold">Workflow Trace</h4>
-          <p className="mt-1 text-xs leading-5 text-muted">
+          <h4 className="text-sm font-semibold text-slate-950">Workflow Trace</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
             Observable analysis stages from input preparation through guidance generation.
           </p>
         </div>
@@ -2093,7 +2437,7 @@ function AnalysisWorkflowTrace({ analysis }: { analysis: JobAnalysisResponse }) 
       {analysis.workflow_run?.tasks?.length ? (
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {analysis.workflow_run.tasks.map((task) => (
-            <div className="rounded-md border border-line bg-slate-50 px-3 py-2 text-xs leading-5" key={task.id}>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5" key={task.id}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold text-slate-900">{task.id.replace(/_/g, " ")}</span>
                 <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-semibold text-slate-600">
@@ -2122,33 +2466,33 @@ function AnalysisReviewSection({
 }) {
   const values = section.items.length > 0 ? section.items : [{ text: section.empty, evidence: [] }];
   return (
-    <section className="min-w-0 rounded-lg border border-line bg-white p-3">
+    <section className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h4 className="text-sm font-bold">{section.title}</h4>
-          <p className="mt-1 text-xs leading-5 text-muted">{section.intent}</p>
+          <h4 className="text-sm font-semibold text-slate-950">{section.title}</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{section.intent}</p>
         </div>
         <button className="icon-button" type="button" onClick={onAsk} aria-label={`Ask about ${section.title}`}>
           <MessageCircle size={17} />
         </button>
       </div>
-      <ul className="mt-3 list-disc space-y-1 pl-5 text-sm leading-5 text-slate-700">
+      <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-5 text-slate-700">
         {values.map((item, index) => (
           <li className={section.items.length ? "" : "text-muted"} key={`${section.title}-${index}`}>
             <span>{item.text}</span>
             {item.evidence.length > 0 ? (
-              <div className="mt-2 space-y-1 rounded-md border border-teal-100 bg-teal-50 px-2 py-2 text-xs leading-5 text-teal-900">
+              <div className="mt-2 space-y-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-2 text-xs leading-5 text-slate-700">
                 {item.evidence.slice(0, 2).map((evidence, evidenceIndex) => (
                   <div key={`${section.title}-${index}-evidence-${evidenceIndex}`}>
                     {evidence.evidence_from_job ? <p><strong>Job evidence:</strong> {evidence.evidence_from_job}</p> : null}
                     {evidence.profile_signal ? <p><strong>Profile:</strong> {evidence.profile_signal}</p> : null}
                     {evidence.profile_source_path ? (
-                      <p className="text-teal-800">
+                      <p className="text-slate-600">
                         <strong>Profile source:</strong> {evidence.profile_source_path}
                         {evidence.profile_evidence ? ` · ${evidence.profile_evidence}` : ""}
                       </p>
                     ) : null}
-                    <p className="text-teal-800">
+                    <p className="text-slate-600">
                       {[evidence.severity, evidence.confidence ? `${evidence.confidence} confidence` : null].filter(Boolean).join(" · ")}
                     </p>
                   </div>
@@ -2189,19 +2533,19 @@ function AnalysisFeedbackControls({
     { value: "other", label: "Other" }
   ];
   return (
-    <section className="mt-4 rounded-lg border border-line bg-white p-3">
+    <section className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h4 className="text-sm font-bold">Analysis Feedback</h4>
-          <p className="mt-1 text-xs leading-5 text-muted">
+          <h4 className="text-sm font-semibold text-slate-950">Analysis Feedback</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
             Store review signals locally so future prompt changes and eval cases can learn from real misses.
           </p>
         </div>
         <div className="flex flex-wrap gap-1">
           {options.map((option) => (
             <button
-              className={`min-h-9 rounded-md border px-2.5 text-xs font-bold ${
-                feedbackType === option.value ? "border-teal-700 bg-teal-50 text-teal-800" : "border-line bg-slate-50 text-slate-700 hover:bg-white"
+              className={`min-h-9 rounded-md border px-2.5 text-xs font-semibold ${
+                feedbackType === option.value ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
               }`}
               key={option.value}
               type="button"
@@ -2213,7 +2557,7 @@ function AnalysisFeedbackControls({
         </div>
       </div>
       <textarea
-        className="mt-3 min-h-20 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+        className="mt-3 min-h-20 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
         value={note}
         onChange={(event) => onNoteChange(event.target.value)}
         placeholder="Optional: what should the analysis have said differently?"
@@ -2258,14 +2602,14 @@ function AssistantChatPanel({
   useWebSearch: boolean;
 }) {
   return (
-    <section className="mt-4 rounded-lg border border-line bg-white p-3">
+    <section className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-normal text-teal-800">{contextLabel}</p>
-          <h4 className="mt-1 text-sm font-bold">{title}</h4>
-          <p className="mt-1 text-xs leading-5 text-muted">{subtitle}</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">{contextLabel}</p>
+          <h4 className="mt-1 text-sm font-semibold text-slate-950">{title}</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{subtitle}</p>
         </div>
-        <label className="inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-slate-50 px-3 text-xs font-bold text-slate-700">
+        <label className="inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700">
           <input
             className="h-4 w-4 accent-teal-700"
             type="checkbox"
@@ -2292,7 +2636,7 @@ function AssistantChatPanel({
 
       <div className="mt-3 flex flex-col gap-2">
         <textarea
-          className="min-h-20 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+          className="min-h-20 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
           value={message}
           onChange={(event) => onMessageChange(event.target.value)}
           placeholder="Example: Why did you say this may be research-oriented? What evidence supports that?"
@@ -2329,9 +2673,9 @@ function JobTracker({
   onDelete: (jobId: number) => void;
 }) {
   return (
-    <section className="rounded-lg border border-line bg-surface p-4 shadow-panel">
+    <Panel>
       <div className="flex items-start justify-between gap-3">
-        <SectionHeader
+        <SectionTitle
           icon={<BriefcaseBusiness size={20} />}
           title="Application Tracker"
           subtitle="Saved jobs, links, status, and revisit-ready analysis."
@@ -2355,7 +2699,7 @@ function JobTracker({
           />
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 
@@ -2376,41 +2720,41 @@ function JobCard({
 
   return (
     <article
-      className={`rounded-lg border bg-white p-3 transition ${
-        selected ? "border-teal-700 shadow-[0_0_0_3px_rgba(15,118,110,0.14)]" : "border-line"
+      className={`rounded-lg border bg-white p-4 transition ${
+        selected ? "border-slate-900 shadow-[0_0_0_3px_rgba(15,23,42,0.12)]" : "border-slate-200 hover:border-slate-300"
       }`}
     >
       <button className="block w-full text-left" type="button" onClick={onSelect}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-bold">{job.title || "Untitled job"}</h3>
-            <p className="mt-1 text-xs text-muted">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-semibold text-slate-950">{job.title || "Untitled job"}</h3>
+            <p className="mt-1 text-xs text-slate-500">
               {job.company || "Unknown company"}
               {job.location ? ` · ${job.location}` : ""}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-start gap-2 lg:justify-end">
             <RecommendationBadge fit={{ score: job.fit_score, priority: job.priority } as JobFit} compact />
-            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600">
+            <Badge>
               {applicationTypeLabel(job.application_type)}
-            </span>
+            </Badge>
           </div>
         </div>
 
         {summary.team ? (
-          <p className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+          <DataPill className="mt-3">
             <Users size={14} />
             {summary.team}
-          </p>
+          </DataPill>
         ) : null}
 
-        <div className="mt-3 space-y-2">
-          <p className="text-sm leading-5 text-slate-800">
-            <span className="font-bold">Team business: </span>
+        <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <p className="text-sm leading-5 text-slate-700">
+            <span className="font-semibold text-slate-950">Team business: </span>
             {summary.business}
           </p>
           <p className="text-sm leading-5 text-slate-700">
-            <span className="font-bold">Role: </span>
+            <span className="font-semibold text-slate-950">Role: </span>
             {summary.description}
           </p>
         </div>
@@ -2418,9 +2762,9 @@ function JobCard({
         {summary.techStack.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Highlighted tech stack">
             {summary.techStack.map((skill) => (
-              <span className="rounded-md border border-teal-100 bg-teal-50 px-2 py-1 text-xs font-bold text-teal-800" key={skill}>
+              <DataPill key={skill}>
                 {skill}
-              </span>
+              </DataPill>
             ))}
           </div>
         ) : null}
@@ -2471,24 +2815,24 @@ function JobDetailDrawer({
   const job = detail?.job;
 
   return (
-    <div className="fixed inset-0 z-40 bg-slate-950/35">
-      <aside className="ml-auto flex h-full w-full max-w-[1180px] flex-col border-l border-line bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-line p-4">
-          <SectionHeader icon={<BookOpenCheck size={20} />} title="Saved Analysis" subtitle="Job detail, guidance, and scoped chat." />
+    <div className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm">
+      <aside className="ml-auto flex h-full w-full max-w-[1240px] flex-col border-l border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4">
+          <SectionTitle icon={<BookOpenCheck size={20} />} title="Saved Analysis" subtitle="Job detail, guidance, and scoped chat." />
           <button className="icon-button" type="button" onClick={onClose} aria-label="Close saved analysis">
             <X size={18} />
           </button>
         </div>
 
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="overflow-y-auto p-4">
+        <div className="overflow-y-auto bg-slate-50/70 p-4">
         {isLoading ? <EmptyState text="Loading saved analysis..." /> : null}
         {job && !isLoading ? (
           <div>
-            <div className="flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h3 className="text-lg font-bold">{job.title || "Untitled job"}</h3>
-                <p className="mt-1 text-sm text-muted">
+                <h3 className="text-lg font-semibold text-slate-950">{job.title || "Untitled job"}</h3>
+                <p className="mt-1 text-sm text-slate-500">
                   {job.company || "Unknown company"}
                   {job.location ? ` · ${job.location}` : ""}
                 </p>
@@ -2498,7 +2842,7 @@ function JobDetailDrawer({
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {job.source_url ? (
-                <a className="inline-flex items-center gap-2 text-sm font-bold text-teal-800" href={job.source_url} target="_blank" rel="noreferrer">
+                <a className="link-button" href={job.source_url} target="_blank" rel="noreferrer">
                   <ExternalLink size={16} />
                   Open original job link
                 </a>
@@ -2517,7 +2861,10 @@ function JobDetailDrawer({
 
             {analysis ? (
               <div className="mt-4">
-                <p className="text-sm leading-6">{analysis.fit.summary}</p>
+                <Panel>
+                  <h4 className="text-sm font-semibold text-slate-950">Decision summary</h4>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">{analysis.fit.summary}</p>
+                </Panel>
                 <AnalysisSections fit={analysis.fit} guidance={analysis.guidance} parsedJob={analysis.parsed_job} singleColumn />
               </div>
             ) : (
@@ -2526,7 +2873,7 @@ function JobDetailDrawer({
           </div>
         ) : null}
         </div>
-        <div className="min-h-0 border-t border-line bg-slate-50 p-4 lg:border-l lg:border-t-0">
+        <div className="min-h-0 border-t border-slate-200 bg-white p-4 lg:border-l lg:border-t-0">
           {job && !isLoading ? <JobChatPanel jobId={job.id} /> : null}
         </div>
         </div>
@@ -2578,7 +2925,7 @@ function JobChatPanel({ jobId }: { jobId: number }) {
     setStreamError(null);
     setIsStreaming(true);
     try {
-      await streamJobChat(jobId, { message: trimmed, use_llm: true, use_web_search: useWebSearch }, (event) => {
+      await streamJobChat(jobId, { message: trimmed, use_web_search: useWebSearch }, (event) => {
         if (event.type === "status") {
           setStreamStatuses((current) => [...current.slice(-3), event.message]);
         }
@@ -2603,18 +2950,18 @@ function JobChatPanel({ jobId }: { jobId: number }) {
   }
 
   return (
-    <section className="flex h-full min-h-[560px] flex-col rounded-lg border border-line bg-white p-3">
+    <section className="flex h-full min-h-[560px] flex-col rounded-lg border border-slate-200 bg-white p-3">
       <div className="flex items-start gap-2">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-teal-50 text-teal-800">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-700">
           <MessageCircle size={18} />
         </div>
       <div>
-          <h3 className="text-sm font-bold">Ask About This Job</h3>
-          <p className="mt-1 text-xs leading-5 text-muted">Questions use the saved job, analysis, profile, and local chat history.</p>
+          <h3 className="text-sm font-semibold text-slate-950">Ask About This Job</h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">Questions use the saved job, analysis, profile, and local chat history.</p>
         </div>
       </div>
 
-      <label className="mt-3 flex items-start gap-2 rounded-md border border-line bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+      <label className="mt-3 flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
         <input
           className="mt-0.5 h-4 w-4 accent-teal-700"
           type="checkbox"
@@ -2658,9 +3005,9 @@ function JobChatPanel({ jobId }: { jobId: number }) {
         </div>
       ) : null}
 
-      <div className="sticky bottom-0 -mx-3 mt-3 flex flex-col gap-2 border-t border-line bg-white/95 px-3 pb-1 pt-3 backdrop-blur">
+      <div className="sticky bottom-0 -mx-3 mt-3 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-3 pb-1 pt-3 backdrop-blur">
         <textarea
-          className="min-h-24 w-full resize-y rounded-md border border-line bg-white p-3 text-sm leading-5 text-ink outline-none transition focus:border-teal-700 focus:ring-4 focus:ring-teal-700/15"
+          className="min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-5 text-slate-950 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Ask how to prepare, whether to apply, or how to position your experience..."
@@ -2677,7 +3024,7 @@ function JobChatPanel({ jobId }: { jobId: number }) {
 function StreamingAssistantBubble({ answer, statuses }: { answer: string; statuses: string[] }) {
   return (
     <div className="flex justify-start">
-      <div className="max-w-[92%] rounded-lg border border-line bg-white px-3 py-2 text-sm leading-5 text-slate-800">
+      <div className="max-w-[92%] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-5 text-slate-800">
         <div className="mb-2 space-y-1 border-b border-slate-200 pb-2">
           {statuses.length ? (
             statuses.map((status) => (
@@ -2705,7 +3052,7 @@ function ChatBubble({ message }: { message: JobChatMessage | GlobalChatMessage }
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[92%] rounded-lg px-3 py-2 text-sm leading-5 shadow-sm ${
-          isUser ? "border border-slate-300 bg-slate-100 text-slate-900" : "border border-line bg-white text-slate-800"
+          isUser ? "border border-slate-300 bg-slate-100 text-slate-950" : "border border-slate-200 bg-white text-slate-800"
         }`}
       >
         <MarkdownMessage content={message.content} />
@@ -2716,7 +3063,7 @@ function ChatBubble({ message }: { message: JobChatMessage | GlobalChatMessage }
               {message.citations.map((citation) => (
                 <li key={citation.url}>
                   <a
-                    className={`text-xs font-bold underline ${isUser ? "text-slate-700" : "text-teal-800"}`}
+                    className="text-xs font-semibold text-slate-700 underline"
                     href={citation.url}
                     target="_blank"
                     rel="noreferrer"
@@ -2735,22 +3082,20 @@ function ChatBubble({ message }: { message: JobChatMessage | GlobalChatMessage }
 
 function MarkdownMessage({ content }: { content: string }) {
   return (
-    <ReactMarkdown
-      components={{
-        a: ({ children, href }) => (
-          <a className="font-bold text-teal-800 underline" href={href} target="_blank" rel="noreferrer">
-            {children}
-          </a>
-        ),
-        code: ({ children }) => <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] text-slate-900">{children}</code>,
-        ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
-        p: ({ children }) => <p className="my-1 whitespace-pre-wrap">{children}</p>,
-        pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-50">{children}</pre>,
-        ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+    <div className="prose-chat">
+      <ReactMarkdown
+        components={{
+          a: ({ children, href }) => (
+            <a className="font-semibold text-slate-900 underline" href={href} target="_blank" rel="noreferrer">
+              {children}
+            </a>
+          ),
+          pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-50">{children}</pre>
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -2799,8 +3144,8 @@ function AnalysisSections({
 function InfoList({ title, items }: { title: string; items: string[] }) {
   const values = items.length > 0 ? items : ["None detected yet"];
   return (
-    <section className="rounded-md border border-line bg-white p-3">
-      <h3 className="text-sm font-bold">{title}</h3>
+    <section className="rounded-lg border border-slate-200 bg-white p-3">
+      <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
       <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-5 text-slate-700">
         {values.map((item, index) => (
           <li key={`${title}-${index}`}>{item}</li>
@@ -2813,21 +3158,17 @@ function InfoList({ title, items }: { title: string; items: string[] }) {
 function RecommendationBadge({ fit, compact = false }: { fit: JobFit; compact?: boolean }) {
   const tone =
     fit.priority === "high"
-      ? "border-teal-100 bg-teal-50 text-teal-800"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
       : fit.priority === "medium"
-        ? "border-amber-100 bg-amber-50 text-amber-600"
-        : "border-rose-100 bg-rose-50 text-rose-700";
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-rose-200 bg-rose-50 text-rose-700";
 
   return (
-    <div className={`inline-flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-bold ${tone}`}>
+    <div className={`inline-flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-semibold ${tone}`}>
       <span>{fit.score}</span>
       {!compact ? <span>{titleCase(fit.priority)} priority</span> : null}
     </div>
   );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm font-semibold text-muted">{text}</div>;
 }
 
 function parserFallbackLabel(analysis: JobAnalysisResponse): string {

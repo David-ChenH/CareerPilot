@@ -1,73 +1,107 @@
-current_role:
-  title: "Senior Software Engineer"
-  company: "Example Company"
-  experience_years: 5
+profile_schema_version: 1
 
-positioning:
-  summary: "Backend/platform engineer interested in production AI systems, workflow automation, and agentic applications."
-  target_identity: "Backend/platform engineer evolving into an AI platform and agentic systems engineer."
+identity:
+  current_title: Senior Software Engineer
+  current_company: Example Company
+  location: Remote
+  years_experience: 5
+  tenure: 2020 - Present
+  summary: Backend/platform engineer interested in production AI systems, workflow automation, and agentic applications.
+  target_identity: Backend/platform engineer evolving into an AI platform and agentic systems engineer.
 
-core_background:
-  - "Backend systems engineering"
-  - "API and service design"
-  - "Workflow orchestration"
-  - "Cloud infrastructure"
-  - "Distributed systems"
+background:
+  - Backend systems engineering
+  - API and service design
+  - Workflow orchestration
+  - Cloud infrastructure
+  - Distributed systems
+
+education:
+  - school: Example University
+    degree: M.S.
+    field: Computer Engineering
+    start_year: 2018
+    end_year: 2020
+  - school: Example University
+    degree: B.S.
+    field: Electrical Engineering
+    start_year: 2014
+    end_year: 2018
+
+skills:
+  - name: Python
+    category: language
+    proficiency: strong
+  - name: Backend architecture
+    category: architecture
+    proficiency: strong
+  - name: Cloud services
+    category: cloud
+    proficiency: working
+  - name: API and service design
+    category: backend
+    proficiency: strong
+  - name: Distributed systems fundamentals
+    category: architecture
+    proficiency: working
+
+projects:
+  - name: Backend platform services
+    domain: Platform engineering
+    summary: Designed and maintained backend services, APIs, and internal platform capabilities.
+    role: Backend engineer
+    technologies:
+      - Python
+      - Cloud services
+    architecture_patterns:
+      - API design
+      - Workflow orchestration
+    impact_metrics:
+      - Improved reliability, observability, or operational processes.
+    source: example_profile
 
 experience_highlights:
-  - "Designed and maintained backend services"
-  - "Built APIs and internal platform capabilities"
-  - "Worked on workflow or automation systems"
-  - "Improved reliability, observability, or operational processes"
+  - Designed and maintained backend services.
+  - Built APIs and internal platform capabilities.
+  - Worked on workflow or automation systems.
+  - Improved reliability, observability, or operational processes.
 
-technical_strengths:
-  - "Python"
-  - "Backend architecture"
-  - "Cloud services"
-  - "API and service design"
-  - "Distributed systems fundamentals"
-
-target_roles:
-  - "AI platform engineer"
-  - "Agentic systems engineer"
-  - "LLM application infrastructure engineer"
-  - "Workflow automation platform engineer"
-  - "Senior backend engineer"
-  - "Distributed systems engineer"
-  - "Platform engineer"
-
-career_goals:
-  - "Move toward production AI platform, agentic systems, workflow orchestration, or infrastructure teams"
-  - "Apply to senior backend, AI platform, and distributed systems roles"
-
-learning_goals:
-  - "Production-grade agentic architectures"
-  - "Hands-on AI agent, tool, and workflow development"
-  - "Modern AI infrastructure patterns"
-  - "Distributed AI system design"
-  - "Container orchestration basics"
-
-must_have:
-  - "Backend/platform-heavy role"
-  - "Strong engineering systems ownership"
-  - "AI, agent, or LLM relevance"
-
-nice_to_have:
-  - "Cloud-native platform work"
-  - "Workflow orchestration"
-  - "Distributed systems"
-  - "Internal platform/tooling"
-
-avoid:
-  - "Pure frontend roles"
-  - "Prompt-engineering-only roles"
-  - "Data labeling or AI operations roles"
-  - "Roles with no backend/platform depth"
-
-unknown_or_to_confirm:
-  - "Work authorization"
-  - "Preferred location"
-  - "Remote/hybrid preference"
-  - "Salary target"
-  - "Management vs IC preference"
-  - "Willingness to join startups"
+preferences:
+  target_roles:
+    - AI platform engineer
+    - Agentic systems engineer
+    - LLM application infrastructure engineer
+    - Workflow automation platform engineer
+    - Senior backend engineer
+    - Distributed systems engineer
+    - Platform engineer
+  career_goals:
+    - Move toward production AI platform, agentic systems, workflow orchestration, or infrastructure teams.
+    - Apply to senior backend, AI platform, and distributed systems roles.
+  learning_goals:
+    - Production-grade agentic architectures
+    - Hands-on AI agent, tool, and workflow development
+    - Modern AI infrastructure patterns
+    - Distributed AI system design
+    - Container orchestration basics
+  must_have:
+    - Backend/platform-heavy role
+    - Strong engineering systems ownership
+    - AI, agent, or LLM relevance
+  nice_to_have:
+    - Cloud-native platform work
+    - Workflow orchestration
+    - Distributed systems
+    - Internal platform/tooling
+  avoid:
+    - Pure frontend roles
+    - Prompt-engineering-only roles
+    - Data labeling or AI operations roles
+    - Roles with no backend/platform depth
+  unknown_or_to_confirm:
+    - Work authorization
+    - Preferred location
+    - Remote/hybrid preference
+    - Salary target
+    - Management vs IC preference
+    - Willingness to join startups

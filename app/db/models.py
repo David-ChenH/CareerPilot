@@ -1,4 +1,6 @@
 from enum import StrEnum
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.artifacts import ArtifactProvenance
@@ -21,6 +23,13 @@ class ApplicationType(StrEnum):
     INTERNAL_TRANSFER = "internal_transfer"
     EXTERNAL_APPLICATION = "external_application"
     UNKNOWN = "unknown"
+
+
+class LeetCodeStatus(StrEnum):
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    SOLVED = "solved"
+    REVIEW = "review"
 
 
 class AgentTaskStatus(StrEnum):
@@ -130,6 +139,21 @@ class PrepPlan(BaseModel):
     schema_version: int = 1
     revision: int = 1
     provenance: ArtifactProvenance | None = None
+    workflow_graph: dict[str, Any] | None = None
+    workflow_run: dict[str, Any] | None = None
+    evaluation: dict[str, Any] | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class LeetCodeProblem(BaseModel):
+    id: int | None = None
+    title: str
+    url: str
+    category: str
+    tags: list[str] = Field(default_factory=list)
+    note: str | None = None
+    status: LeetCodeStatus = LeetCodeStatus.TODO
     created_at: str | None = None
     updated_at: str | None = None
 

@@ -4,8 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app.agents.action_registry import ActionRegistry
+from app.agents.assistant_planner import ActionExecutionStatus, AssistantPlan, AssistantPlanStatus, AssistantPlannedAction
 from app.artifacts import PROFILE_PROPOSAL_WORKFLOW_VERSION, artifact_provenance
 from app.agents.coordinator import (
     AnalysisChatRequest,
@@ -15,10 +17,12 @@ from app.agents.coordinator import (
     JobAnalysisRequest,
     JobChatRequest,
     JobSearchCoordinator,
+    _classify_application_type,
 )
-from app.db.models import AgentTaskStatus, AgentTaskType, ApplicationStatus, ApplicationType, JobRecord, ProfileProposal, ResumeVersion
+from app.db.models import AgentTaskStatus, AgentTaskType, ApplicationStatus, ApplicationType, JobRecord, LeetCodeProblem, LeetCodeStatus, ProfileProposal, ResumeVersion
 from app.db.repository import JobRepository
 from app.memory.profile_store import ProfileStore
+from app.memory.profile_schema import ProfileV1, load_profile_v1
 from app.tools.job_parser import ParsedJob, parse_job_description
 from app.tools.job_fetcher import _ReadableHTMLParser
 from app.tools.job_extraction import ExtractedJobPosting, sections_from_lines
@@ -289,6 +293,64 @@ def test_profile_store_applies_updates_and_writes_audit(tmp_path: Path) -> None:
     assert '"profile_snapshot"' in audit_path.read_text(encoding="utf-8")
 
 
+def test_profile_store_loads_official_v1_profile() -> None:
+    profile = ProfileStore(path=Path("app/memory/profile.example.yaml")).load_model()
+
+    assert isinstance(profile, ProfileV1)
+    assert profile.profile_schema_version == 1
+    assert profile.identity.current_title
+    assert profile.skills[0].name == "Python"
+
+
+def test_profile_store_projects_v1_profile_for_existing_consumers() -> None:
+    runtime_profile = ProfileStore(path=Path("app/memory/profile.example.yaml")).load()
+
+    assert runtime_profile["current_role"]["title"] == "Senior Software Engineer"
+    assert "Python" in runtime_profile["technical_strengths"]
+    assert runtime_profile["target_roles"]
+
+
+def test_profile_v1_exposes_pythonic_accessors() -> None:
+    profile = ProfileStore(path=Path("app/memory/profile.example.yaml")).load_model()
+
+    assert profile.current_company == "Example Company"
+    assert profile.current_title == "Senior Software Engineer"
+    assert "Python" in profile.skill_names
+    assert profile.learning_goals
+    assert profile.resume_highlights(limit=2)
+
+
+def test_application_type_classifier_uses_typed_profile() -> None:
+    profile = ProfileStore(path=Path("app/memory/profile.example.yaml")).load_model()
+
+    assert _classify_application_type(profile, "Example Company") == ApplicationType.INTERNAL_TRANSFER
+    assert _classify_application_type(profile, "Different Company") == ApplicationType.EXTERNAL_APPLICATION
+
+
+def test_profile_schema_accepts_legacy_profile_shape() -> None:
+    profile = load_profile_v1(
+        {
+            "current_role": {
+                "title": "Backend Engineer",
+                "company": "Example",
+                "experience_years": 5,
+            },
+            "positioning": {
+                "summary": "Backend engineer moving toward AI platform systems.",
+                "target_identity": "AI platform engineer",
+            },
+            "technical_strengths": ["Python", "AWS Step Functions"],
+            "education": ["Example University, Computer Engineering, 2018 - 2020"],
+            "target_roles": ["AI platform engineer"],
+        }
+    )
+
+    assert profile.profile_schema_version == 1
+    assert profile.identity.current_title == "Backend Engineer"
+    assert profile.skills[0].name == "Python"
+    assert profile.education[0].raw == "Example University, Computer Engineering, 2018 - 2020"
+
+
 def test_analysis_feedback_is_recorded_as_jsonl(tmp_path: Path) -> None:
     feedback_path = tmp_path / "analysis_feedback.jsonl"
     record = record_analysis_feedback(
@@ -335,19 +397,62 @@ def test_agent_task_lifecycle_is_persisted(tmp_path: Path) -> None:
     assert persisted.artifacts["saved_job"]["title"] == "Senior Backend Engineer"
 
 
-def test_action_registry_detects_job_url_ingestion_intent() -> None:
-    action = ActionRegistry().detect_from_message("Please save and analyze this job https://example.com/jobs/123.")
+def test_action_registry_requires_confirmation_for_mutating_job_action() -> None:
+    action = AssistantPlannedAction(
+        name="ingest_job_from_url",
+        arguments={"url": "https://example.com/jobs/123", "save": True},
+        approval_required=True,
+        approval_confirmed=False,
+    )
 
-    assert action is not None
-    assert action.name == "ingest_job_from_url"
-    assert action.parameters["url"] == "https://example.com/jobs/123"
-    assert action.parameters["save"] is True
+    result = ActionRegistry().validate_planned_action(action)
+
+    assert result is not None
+    assert result.status == ActionExecutionStatus.NEEDS_CONFIRMATION
 
 
-def test_action_registry_ignores_unrelated_urls() -> None:
-    action = ActionRegistry().detect_from_message("Can you summarize https://example.com/docs for me?")
+def test_action_registry_accepts_confirmed_job_action() -> None:
+    action = AssistantPlannedAction(
+        name="ingest_job_from_url",
+        arguments={"url": "https://example.com/jobs/123", "save": True},
+        approval_required=True,
+        approval_confirmed=True,
+    )
 
-    assert action is None
+    assert ActionRegistry().validate_planned_action(action) is None
+
+
+def test_action_registry_rejects_unknown_planner_action() -> None:
+    action = AssistantPlannedAction(name="run_shell_command")
+
+    result = ActionRegistry().validate_planned_action(action)
+
+    assert result is not None
+    assert result.status == ActionExecutionStatus.REJECTED
+
+
+def test_assistant_plan_can_represent_multiple_planned_actions() -> None:
+    plan = AssistantPlan(
+        intent_summary="Analyze a job link and update profile memory.",
+        status=AssistantPlanStatus.READY,
+        confidence=0.9,
+        actions=[
+            AssistantPlannedAction(
+                name="ingest_job_from_url",
+                arguments={"url": "https://example.com/jobs/123", "save": False},
+                approval_required=False,
+                approval_confirmed=False,
+            ),
+            AssistantPlannedAction(
+                name="update_profile_memory",
+                arguments={"proposed_updates": {"technical_strengths": ["Java"]}},
+                approval_required=True,
+                approval_confirmed=False,
+            ),
+        ],
+    )
+
+    assert [action.name for action in plan.actions] == ["ingest_job_from_url", "update_profile_memory"]
 
 
 def test_job_text_compaction_keeps_analysis_under_budget() -> None:
@@ -1773,7 +1878,7 @@ def test_repository_migrates_legacy_analysis_and_preserves_history(tmp_path: Pat
     assert "risk_summary" not in versions[1]["analysis"]["guidance"]
 
 
-def test_job_chat_persists_messages_with_fallback(tmp_path: Path) -> None:
+def test_job_chat_persists_llm_unavailable_message_without_fallback(tmp_path: Path) -> None:
     coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(),
         repository=JobRepository(tmp_path / "jobs.sqlite3"),
@@ -1800,8 +1905,8 @@ def test_job_chat_persists_messages_with_fallback(tmp_path: Path) -> None:
     )
 
     assert response is not None
-    assert response.responder_used == "deterministic"
-    assert "prep" in response.answer.lower() or "start" in response.answer.lower()
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
 
     messages = coordinator.repository.list_chat_messages(analysis.saved_job.id)
     assert len(messages) == 2
@@ -1809,7 +1914,7 @@ def test_job_chat_persists_messages_with_fallback(tmp_path: Path) -> None:
     assert messages[1].role == "assistant"
 
 
-def test_global_chat_treats_my_education_background_as_profile_fact(tmp_path: Path) -> None:
+def test_global_chat_without_planner_does_not_mutate_profile_memory(tmp_path: Path) -> None:
     profile_path = tmp_path / "profile.local.yaml"
     coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(path=profile_path, audit_path=tmp_path / "profile_audit.jsonl"),
@@ -1822,17 +1927,18 @@ def test_global_chat_treats_my_education_background_as_profile_fact(tmp_path: Pa
                 "my education background Example State University, Computer Engineering, 2014 - 2018 "
                 "Example Tech University, Computer Science, 2018 - 2020"
             ),
-            use_llm=True,
+            use_llm=False,
         )
     )
 
     profile = coordinator.profile_store.load()
-    assert response.responder_used == "profile_update"
-    assert "Example State University, Computer Engineering, 2014 - 2018" in profile["education"]
-    assert "Example Tech University, Computer Science, 2018 - 2020" in profile["education"]
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
+    assert "Example State University, Computer Engineering, 2014 - 2018" not in profile["education"]
+    assert "Example Tech University, Computer Science, 2018 - 2020" not in profile["education"]
 
 
-def test_job_chat_web_search_request_falls_back_when_llm_unavailable(tmp_path: Path) -> None:
+def test_job_chat_web_search_request_reports_unavailable_without_fallback(tmp_path: Path) -> None:
     coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(),
         repository=JobRepository(tmp_path / "jobs.sqlite3"),
@@ -1858,7 +1964,8 @@ def test_job_chat_web_search_request_falls_back_when_llm_unavailable(tmp_path: P
     assert response is not None
     assert response.used_web_search is False
     assert response.citations == []
-    assert "Web search was requested" in response.answer
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
 
 
 def test_analysis_preview_chat_uses_unsaved_analysis_without_persisting(tmp_path: Path) -> None:
@@ -1884,7 +1991,8 @@ def test_analysis_preview_chat_uses_unsaved_analysis_without_persisting(tmp_path
         )
     )
 
-    assert response.responder_used == "deterministic"
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
     assert len(response.messages) == 2
     assert coordinator.repository.list_jobs() == []
 
@@ -1913,7 +2021,8 @@ def test_unified_assistant_chat_supports_analysis_preview_focus(tmp_path: Path) 
 
     assert response is not None
     assert response.focus.type == "analysis_preview"
-    assert response.responder_used == "deterministic"
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
     assert len(response.messages) == 2
     assert coordinator.repository.list_jobs() == []
 
@@ -1937,6 +2046,35 @@ def test_prep_plan_generation_and_task_update(tmp_path: Path) -> None:
     assert updated.days[0].tasks[0].completed is True
     assert updated.revision == 2
     assert [version["revision"] for version in repository.list_prep_plan_versions(saved.id)] == [1, 2]
+
+
+def test_leetcode_problem_crud_is_persisted(tmp_path: Path) -> None:
+    repository = JobRepository(tmp_path / "jobs.sqlite3")
+    saved = repository.create_leetcode_problem(
+        LeetCodeProblem(
+            title="Two Sum",
+            url="https://leetcode.com/problems/two-sum/",
+            category="hash map",
+            tags=["array", "easy"],
+            note="Use complement lookup.",
+        )
+    )
+
+    assert saved.id is not None
+    listed = repository.list_leetcode_problems()
+    assert [problem.title for problem in listed] == ["Two Sum"]
+    assert listed[0].tags == ["array", "easy"]
+
+    updated = repository.update_leetcode_problem(
+        saved.id,
+        saved.model_copy(update={"status": LeetCodeStatus.SOLVED, "note": "Solved with one-pass hash map."}),
+    )
+    assert updated is not None
+    assert updated.status == LeetCodeStatus.SOLVED
+    assert repository.get_leetcode_problem(saved.id).note == "Solved with one-pass hash map."
+
+    assert repository.delete_leetcode_problem(saved.id)
+    assert repository.list_leetcode_problems() == []
 
 
 def test_resume_pdf_version_is_persisted_with_provenance(tmp_path: Path) -> None:
@@ -2069,15 +2207,15 @@ def test_global_chat_uses_saved_jobs_and_persists_messages(tmp_path: Path) -> No
         )
     )
 
-    assert response.responder_used == "deterministic"
-    assert "strongest" in response.answer.lower()
+    assert response.responder_used == "unavailable"
+    assert "requires LLM mode" in response.answer
     messages = coordinator.repository.list_global_chat_messages()
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[1].role == "assistant"
 
 
-def test_global_chat_fallback_answers_follow_up_intent_differently(tmp_path: Path) -> None:
+def test_global_chat_without_llm_does_not_pretend_to_answer_follow_up_intent(tmp_path: Path) -> None:
     coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(),
         repository=JobRepository(tmp_path / "jobs.sqlite3"),
@@ -2105,12 +2243,13 @@ def test_global_chat_fallback_answers_follow_up_intent_differently(tmp_path: Pat
         )
     )
 
-    assert gaps_response.answer != prep_response.answer
-    assert "gap" in gaps_response.answer.lower()
-    assert "prep" in prep_response.answer.lower() or "sequence" in prep_response.answer.lower()
+    assert gaps_response.responder_used == "unavailable"
+    assert prep_response.responder_used == "unavailable"
+    assert "requires LLM mode" in gaps_response.answer
+    assert "requires LLM mode" in prep_response.answer
 
 
-def test_job_chat_fallback_answers_follow_up_intent_differently(tmp_path: Path) -> None:
+def test_job_chat_without_llm_does_not_pretend_to_answer_follow_up_intent(tmp_path: Path) -> None:
     coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(),
         repository=JobRepository(tmp_path / "jobs.sqlite3"),
@@ -2139,37 +2278,102 @@ def test_job_chat_fallback_answers_follow_up_intent_differently(tmp_path: Path) 
 
     assert gaps_response is not None
     assert resume_response is not None
-    assert gaps_response.answer != resume_response.answer
-    assert "gap" in gaps_response.answer.lower()
-    assert "resume" in resume_response.answer.lower()
+    assert gaps_response.responder_used == "unavailable"
+    assert resume_response.responder_used == "unavailable"
+    assert "requires LLM mode" in gaps_response.answer
+    assert "requires LLM mode" in resume_response.answer
 
 
-def test_global_chat_updates_education_when_user_explicitly_requests(tmp_path: Path) -> None:
+def test_global_chat_planner_updates_profile_after_confirmation(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
     profile_path = tmp_path / "profile.local.yaml"
     audit_path = tmp_path / "profile_audit.jsonl"
-    coordinator = JobSearchCoordinator(
+    local_coordinator = JobSearchCoordinator(
         profile_store=ProfileStore(path=profile_path, audit_path=audit_path),
         repository=JobRepository(tmp_path / "jobs.sqlite3"),
     )
-
-    response = coordinator.chat_globally(
-        GlobalChatRequest(
-            message=(
-                "Please update my education background: Example State University, Computer Engineering, 2014 - 2018 "
-                "Example Tech University, Computer Science, 2018 - 2020"
-            ),
-            use_llm=False,
-        )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+    monkeypatch.setattr(
+        main_app,
+        "plan_assistant_actions_with_llm",
+        lambda **_kwargs: AssistantPlan(
+            intent_summary="Update education background.",
+            status=AssistantPlanStatus.READY,
+            confidence=0.95,
+            actions=[
+                AssistantPlannedAction(
+                    name="update_profile_memory",
+                    arguments={
+                        "proposed_updates": {
+                            "education": [
+                                "Example State University, Computer Engineering, 2014 - 2018",
+                                "Example Tech University, Computer Science, 2018 - 2020",
+                            ]
+                        }
+                    },
+                    approval_required=True,
+                    approval_confirmed=True,
+                    confidence=0.95,
+                )
+            ],
+        ),
     )
 
-    profile = coordinator.profile_store.load()
-    assert response.responder_used == "profile_update"
-    assert "Updated your local profile memory" in response.answer
+    response = main_app.chat_globally(
+        GlobalChatRequest(
+            message="Yes, confirm the education update.",
+            use_llm=True,
+        ),
+        BackgroundTasks(),
+    )
+
+    profile = local_coordinator.profile_store.load()
+    assert response.responder_used == "planner:executed"
+    assert response.action_results[0].status == "executed"
     assert "Example State University, Computer Engineering, 2014 - 2018" in profile["education"]
     assert "Example Tech University, Computer Science, 2018 - 2020" in profile["education"]
-    assert '"source": "assistant_chat"' in audit_path.read_text(encoding="utf-8")
+    assert '"source": "assistant_planner"' in audit_path.read_text(encoding="utf-8")
 
-    messages = coordinator.repository.list_global_chat_messages(response.session.id)
+    messages = local_coordinator.repository.list_global_chat_messages(response.session.id)
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[1].role == "assistant"
+
+
+def test_global_chat_planner_requires_confirmation_before_profile_update(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
+    profile_path = tmp_path / "profile.local.yaml"
+    local_coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(path=profile_path, audit_path=tmp_path / "profile_audit.jsonl"),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+    monkeypatch.setattr(
+        main_app,
+        "plan_assistant_actions_with_llm",
+        lambda **_kwargs: AssistantPlan(
+            intent_summary="Update education background.",
+            status=AssistantPlanStatus.READY,
+            confidence=0.95,
+            actions=[
+                AssistantPlannedAction(
+                    name="update_profile_memory",
+                    arguments={"proposed_updates": {"education": ["Example State University, 2014 - 2018"]}},
+                    approval_required=True,
+                    approval_confirmed=False,
+                    confidence=0.95,
+                )
+            ],
+        ),
+    )
+
+    response = main_app.chat_globally(
+        GlobalChatRequest(message="Update my education background.", use_llm=True),
+        BackgroundTasks(),
+    )
+
+    assert response.responder_used == "planner:validation"
+    assert response.action_results[0].status == "needs_confirmation"
+    assert "Example State University, 2014 - 2018" not in local_coordinator.profile_store.load()["education"]

@@ -10,6 +10,7 @@ from app.artifacts import (
 )
 from app.config.env import load_local_env
 from app.db.models import JobRecord, PrepDay, PrepPlan, PrepTask
+from app.memory.profile_schema import ProfileV1
 from app.tools.llm_job_chat import DEFAULT_LLM_MODEL
 
 
@@ -28,7 +29,7 @@ class LLMPrepPlannerUnavailable(RuntimeError):
 
 
 def generate_prep_plan_with_llm(
-    profile: dict[str, Any],
+    profile: dict[str, Any] | ProfileV1,
     jobs: list[JobRecord],
     timeline_days: int,
     hours_per_day: float,
@@ -67,7 +68,7 @@ def generate_prep_plan_with_llm(
                 "role": "user",
                 "content": json.dumps(
                     {
-                        "profile": profile,
+                        "profile": _profile_for_llm(profile),
                         "target_job": selected_job.model_dump() if selected_job else None,
                         "saved_jobs_summary": [
                             {
@@ -106,7 +107,7 @@ def generate_prep_plan_with_llm(
 
 
 def generate_prep_plan(
-    profile: dict[str, Any],
+    profile: dict[str, Any] | ProfileV1,
     jobs: list[JobRecord],
     timeline_days: int,
     hours_per_day: float,
@@ -176,7 +177,7 @@ def parse_prep_plan_text(text: str, title: str = "Imported prep plan") -> PrepPl
     )
 
 
-def _topics_from_context(profile: dict[str, Any], job: JobRecord | None, focus: str | None) -> list[tuple[str, str]]:
+def _topics_from_context(profile: dict[str, Any] | ProfileV1, job: JobRecord | None, focus: str | None) -> list[tuple[str, str]]:
     topics = []
     if focus:
         topics.extend((item.strip(), "learning") for item in focus.split(",") if item.strip())
@@ -186,9 +187,14 @@ def _topics_from_context(profile: dict[str, Any], job: JobRecord | None, focus: 
         topics.extend((gap, "learning") for gap in fit.get("gaps", [])[:5])
         topics.extend((item, "interview") for item in guidance.get("interview_focus", [])[:3])
         topics.extend((skill, "learning") for skill in job.skills[:5])
-    topics.extend((goal, "learning") for goal in profile.get("learning_goals", [])[:5])
+    learning_goals = profile.learning_goals if isinstance(profile, ProfileV1) else profile.get("learning_goals", [])
+    topics.extend((goal, "learning") for goal in learning_goals[:5])
     topics.extend(DEFAULT_TOPICS)
     return _dedupe_topics(topics)
+
+
+def _profile_for_llm(profile: dict[str, Any] | ProfileV1) -> dict[str, Any]:
+    return profile.to_runtime_context() if isinstance(profile, ProfileV1) else profile
 
 
 def _dedupe_topics(values: list[tuple[str, str]]) -> list[tuple[str, str]]:

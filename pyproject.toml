@@ -21,6 +21,7 @@ browser = [
   "playwright>=1.45.0",
 ]
 ai = [
+  "langgraph>=0.2.0",
   "openai>=2.0.0",
 ]
 
