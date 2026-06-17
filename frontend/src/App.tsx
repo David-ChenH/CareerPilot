@@ -70,6 +70,7 @@ import type {
   ApplicationStatus,
   AnalysisFeedbackType,
   AgentTask,
+  AgentTaskStep,
   EvidenceItem,
   GlobalChatMessage,
   GlobalChatSession,
@@ -1744,7 +1745,11 @@ function AnalyzeJobView({
               <span className="block text-xs">Review the new analysis before updating the saved tracker record.</span>
             </div>
           ) : null}
-          {backgroundTask ? <BackgroundTaskStatus task={backgroundTask} /> : null}
+          {backgroundTask ? (
+            <BackgroundTaskStatus task={backgroundTask} />
+          ) : fetchPending || backgroundSavePending ? (
+            <BackgroundTaskStarting save={backgroundSavePending} />
+          ) : null}
 
           {inputMode === "link" && description ? (
             <button className="secondary-button" type="button" onClick={() => setShowFetchedText((current) => !current)}>
@@ -1860,6 +1865,24 @@ function Feedback({ notice, error }: { notice: string | null; error: string | nu
   );
 }
 
+function BackgroundTaskStarting({ save }: { save: boolean }) {
+  return (
+    <div className="rounded-lg border border-teal-200 bg-teal-50/70 p-4 text-sm shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="rounded-md bg-white p-2 text-teal-700 shadow-sm">
+          <Loader2 className="animate-spin" size={18} />
+        </div>
+        <div>
+          <p className="font-semibold text-slate-950">Starting workflow</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            CareerPilot is creating a background task for {save ? "fetch, analysis, and tracker save" : "fetch and analysis preview"}. Progress will appear here shortly.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BackgroundTaskStatus({ task }: { task: AgentTask }) {
   const url = typeof task.input.url === "string" ? task.input.url : "Unknown URL";
   const savedJob = task.artifacts.saved_job;
@@ -1870,6 +1893,7 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
   const totalSteps = Math.max(task.steps.length, workflowGraph?.nodes.length ?? 0, 1);
   const progress = task.status === "completed" ? 100 : task.status === "failed" ? Math.round((completedSteps / totalSteps) * 100) : Math.max(8, Math.round((completedSteps / totalSteps) * 100));
   const currentStep = task.steps.find((step) => step.status === "running") ?? task.steps.find((step) => step.status === "queued") ?? task.steps[task.steps.length - 1];
+  const hasNestedAnalysis = task.steps.some((step) => step.name.startsWith("analysis_"));
   const statusTone =
     task.status === "completed"
       ? "text-emerald-700"
@@ -1877,18 +1901,28 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
         ? "text-rose-700"
         : "text-amber-800";
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className={`flex items-center gap-2 font-semibold ${statusTone}`}>
             {task.status === "completed" ? <CheckCircle2 size={18} /> : task.status === "failed" ? <AlertCircle size={18} /> : <Loader2 className="animate-spin" size={18} />}
             <span>{titleCase(task.status)} analysis workflow</span>
           </div>
-          <p className="mt-1 truncate text-xs text-slate-500" title={url}>{url}</p>
+          <p className="mt-1 truncate text-xs text-slate-500" title={url}>
+            {url}
+          </p>
+          {currentStep ? (
+            <p className="mt-2 text-xs font-medium text-slate-700">
+              Current: <span className="text-slate-950">{formatWorkflowStepName(currentStep.name)}</span>
+            </p>
+          ) : null}
         </div>
-        <Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>
-          {completedSteps}/{totalSteps} steps
-        </Badge>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Badge tone={task.status === "completed" ? "success" : task.status === "failed" ? "danger" : "warning"}>
+            {completedSteps}/{totalSteps} steps
+          </Badge>
+          {hasNestedAnalysis ? <Badge tone="neutral">LLM stages visible</Badge> : null}
+        </div>
       </div>
 
       <div className="mt-3">
@@ -1899,18 +1933,21 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
           />
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-          <span>{currentStep ? `Current: ${currentStep.name.replace(/_/g, " ")}` : "Preparing workflow"}</span>
+          <span>{currentStep?.summary || "Fetching, analyzing, validating, and preparing guidance."}</span>
           {failedSteps > 0 ? <span className="font-semibold text-rose-700">{failedSteps} failed</span> : <span>{progress}%</span>}
         </div>
       </div>
 
       {task.steps.length > 0 ? (
-        <ol className="mt-3 grid gap-2 text-xs leading-5">
+        <ol className="mt-4 grid gap-2 text-xs leading-5">
           {task.steps.map((step) => (
-            <li className="grid gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 sm:grid-cols-[auto_minmax(0,1fr)]" key={`${step.name}-${step.started_at ?? step.status}`}>
-              <StatusPill status={step.status} />
+            <li className={`grid gap-3 rounded-md border px-3 py-2 sm:grid-cols-[auto_minmax(0,1fr)] ${step.name.startsWith("analysis_") ? "border-teal-100 bg-teal-50/45" : "border-slate-200 bg-slate-50"}`} key={`${step.name}-${step.started_at ?? step.status}`}>
+              <WorkflowStepStatusIcon step={step} />
               <div className="min-w-0">
-                <span className="font-semibold text-slate-900">{step.name.replace(/_/g, " ")}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-900">{formatWorkflowStepName(step.name)}</span>
+                  {step.name.startsWith("analysis_") ? <span className="text-[10px] font-bold uppercase text-teal-700">analysis stage</span> : null}
+                </div>
                 {step.summary ? <span className="block text-slate-600">{step.summary}</span> : null}
                 {step.error ? <span className="block font-semibold text-rose-700">{step.error}</span> : null}
               </div>
@@ -1933,6 +1970,23 @@ function BackgroundTaskStatus({ task }: { task: AgentTask }) {
       {task.error ? <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{task.error}</p> : null}
     </div>
   );
+}
+
+function WorkflowStepStatusIcon({ step }: { step: AgentTaskStep }) {
+  if (step.status === "completed") {
+    return <CheckCircle2 className="mt-0.5 text-emerald-600" size={18} />;
+  }
+  if (step.status === "failed" || step.status === "blocked") {
+    return <AlertCircle className="mt-0.5 text-rose-600" size={18} />;
+  }
+  if (step.status === "running") {
+    return <Loader2 className="mt-0.5 animate-spin text-amber-600" size={18} />;
+  }
+  return <Clock className="mt-0.5 text-slate-400" size={18} />;
+}
+
+function formatWorkflowStepName(name: string) {
+  return name.replace(/^analysis_/, "").replace(/_/g, " ");
 }
 
 function WorkflowGraphPreview({
@@ -2672,6 +2726,23 @@ function JobTracker({
   onStatusChange: (jobId: number, status: ApplicationStatus) => void;
   onDelete: (jobId: number) => void;
 }) {
+  const [companyFilter, setCompanyFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<ApplicationStatus | "all">("all");
+  const companyOptions = useMemo(() => {
+    const companies = jobs
+      .map((job) => job.company?.trim())
+      .filter((company): company is string => Boolean(company));
+    return Array.from(new Set(companies)).sort((first, second) => first.localeCompare(second));
+  }, [jobs]);
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      const matchesCompany = companyFilter === "all" || job.company === companyFilter;
+      const matchesStatus = statusFilter === "all" || job.status === statusFilter;
+      return matchesCompany && matchesStatus;
+    });
+  }, [companyFilter, jobs, statusFilter]);
+  const hasActiveFilters = companyFilter !== "all" || statusFilter !== "all";
+
   return (
     <Panel>
       <div className="flex items-start justify-between gap-3">
@@ -2685,10 +2756,63 @@ function JobTracker({
         </button>
       </div>
 
+      <div className="mt-4 grid gap-3 border-y border-slate-200 bg-slate-50/80 px-3 py-3 lg:grid-cols-[minmax(0,1fr)_220px_220px_auto] lg:items-end">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase text-slate-500">Filters</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Showing {filteredJobs.length} of {jobs.length} saved {jobs.length === 1 ? "job" : "jobs"}.
+          </p>
+        </div>
+        <label className="block min-w-0">
+          <span className="text-xs font-semibold text-slate-600">Company</span>
+          <select
+            className="select mt-1 w-full"
+            value={companyFilter}
+            onChange={(event) => setCompanyFilter(event.target.value)}
+            disabled={jobs.length === 0}
+          >
+            <option value="all">All companies</option>
+            {companyOptions.map((company) => (
+              <option key={company} value={company}>
+                {company}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block min-w-0">
+          <span className="text-xs font-semibold text-slate-600">Status</span>
+          <select
+            className="select mt-1 w-full"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as ApplicationStatus | "all")}
+            disabled={jobs.length === 0}
+          >
+            <option value="all">All statuses</option>
+            {statuses.map((status) => (
+              <option key={status} value={status}>
+                {titleCase(status)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="secondary-button justify-center"
+          type="button"
+          disabled={!hasActiveFilters}
+          onClick={() => {
+            setCompanyFilter("all");
+            setStatusFilter("all");
+          }}
+        >
+          Clear filters
+        </button>
+      </div>
+
       <div className="mt-4 grid gap-3">
         {isLoading ? <EmptyState text="Loading saved jobs..." /> : null}
         {!isLoading && jobs.length === 0 ? <EmptyState text="No saved jobs yet." /> : null}
-        {jobs.map((job) => (
+        {!isLoading && jobs.length > 0 && filteredJobs.length === 0 ? <EmptyState text="No saved jobs match the current filters." /> : null}
+        {filteredJobs.map((job) => (
           <JobCard
             key={job.id}
             job={job}

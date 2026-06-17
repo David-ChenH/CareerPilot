@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.agents.assistant_planner import ActionExecutionResult, AssistantPlan
@@ -42,6 +45,10 @@ from app.workflows import (
     WorkflowToolRegistry,
     workflow_graph_from_run,
 )
+from app.workflows.trace import WorkflowTraceEvent
+
+
+WorkflowEventCallback = Callable[[WorkflowTraceEvent, WorkflowRun, Any, Any | None], None]
 
 
 class JobAnalysisRequest(BaseModel):
@@ -154,7 +161,12 @@ class JobSearchCoordinator:
         self.profile_store = profile_store or ProfileStore()
         self.repository = repository or JobRepository()
 
-    def analyze(self, request: JobAnalysisRequest) -> JobAnalysisResponse:
+    def analyze(
+        self,
+        request: JobAnalysisRequest,
+        *,
+        on_workflow_event: WorkflowEventCallback | None = None,
+    ) -> JobAnalysisResponse:
         workflow = _build_job_analysis_workflow(request)
         registry = WorkflowToolRegistry()
         registry.register("load_profile", lambda task_input, dependency_outputs: self._workflow_load_profile(task_input, dependency_outputs))
@@ -163,7 +175,7 @@ class JobSearchCoordinator:
         registry.register("score_fit", lambda task_input, dependency_outputs: self._workflow_score_fit(task_input, dependency_outputs))
         registry.register("validate_fit", lambda task_input, dependency_outputs: self._workflow_validate_fit(task_input, dependency_outputs))
         registry.register("generate_guidance", lambda task_input, dependency_outputs: self._workflow_generate_guidance(request, task_input, dependency_outputs))
-        run = WorkflowExecutor(registry).execute(workflow)
+        run = WorkflowExecutor(registry).execute(workflow, on_event=on_workflow_event)
         if run.status == "failed":
             raise WorkflowExecutionError(_workflow_error_from_run(run))
 

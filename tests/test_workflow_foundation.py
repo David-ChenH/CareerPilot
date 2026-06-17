@@ -528,8 +528,18 @@ def test_job_ingestion_runner_syncs_executor_trace_to_agent_task(tmp_path: Path,
 
     assert persisted is not None
     assert persisted.status == AgentTaskStatus.COMPLETED
-    assert [step.name for step in persisted.steps] == ["fetch_job", "analyze_job", "save_job"]
-    assert [step.status for step in persisted.steps] == ["completed", "completed", "completed"]
+    assert [step.name for step in persisted.steps] == [
+        "fetch_job",
+        "analyze_job",
+        "analysis_load_profile",
+        "analysis_prepare_input",
+        "analysis_parse_job",
+        "analysis_score_fit",
+        "analysis_validate_fit",
+        "analysis_generate_guidance",
+        "save_job",
+    ]
+    assert all(step.status == "completed" for step in persisted.steps)
     assert persisted.artifacts["analysis"]["fit"]["score"] == 82
     assert persisted.artifacts["saved_job"]["id"] is not None
     assert persisted.artifacts["workflow_run"]["workflow_id"] == "job_ingestion"
@@ -602,7 +612,17 @@ def test_job_ingestion_runner_can_complete_preview_without_saving(tmp_path: Path
 
     assert persisted is not None
     assert persisted.status == AgentTaskStatus.COMPLETED
-    assert [step.name for step in persisted.steps] == ["fetch_job", "analyze_job"]
+    assert [step.name for step in persisted.steps] == [
+        "fetch_job",
+        "analyze_job",
+        "analysis_load_profile",
+        "analysis_prepare_input",
+        "analysis_parse_job",
+        "analysis_score_fit",
+        "analysis_validate_fit",
+        "analysis_generate_guidance",
+    ]
+    assert all(step.status == "completed" for step in persisted.steps)
     assert persisted.artifacts["analysis"]["fit"]["score"] == 82
     assert "saved_job" not in persisted.artifacts
     assert repository.list_jobs() == []

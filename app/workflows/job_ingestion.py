@@ -74,7 +74,7 @@ class JobIngestionWorkflowRunner:
         # The registry is the autonomy boundary: the executor can only run tools
         # product code explicitly exposes here, never arbitrary model-generated code.
         registry.register("fetch_job", self._fetch_job)
-        registry.register("analyze_job", self._analyze_job)
+        registry.register("analyze_job", lambda task_input, dependency_outputs: self._analyze_job(task_id, task_input, dependency_outputs))
         registry.register("save_job", self._save_job)
         run = WorkflowExecutor(registry).execute(
             workflow,
@@ -114,7 +114,7 @@ class JobIngestionWorkflowRunner:
             },
         }
 
-    def _analyze_job(self, task_input: dict, dependency_outputs: dict[str, Any]) -> dict:
+    def _analyze_job(self, task_id: str, task_input: dict, dependency_outputs: dict[str, Any]) -> dict:
         fetch_output = dependency_outputs["fetch_job"]
         fetched_page = fetch_output["fetched_page"]
         analysis = self.coordinator.analyze(
@@ -126,7 +126,13 @@ class JobIngestionWorkflowRunner:
                 page_title=fetched_page.title,
                 use_llm=task_input["use_llm"],
                 use_llm_guidance=task_input["use_llm_guidance"],
-            )
+            ),
+            on_workflow_event=lambda event, _run, task, output: self._sync_analysis_event_to_agent_task(
+                task_id,
+                event,
+                task,
+                output,
+            ),
         )
         return {
             "analysis": analysis,
@@ -176,6 +182,39 @@ class JobIngestionWorkflowRunner:
                 task_id,
                 task.id,
                 event.detail or "Blocked by failed dependency.",
+            )
+
+    def _sync_analysis_event_to_agent_task(
+        self,
+        task_id: str,
+        event: WorkflowTraceEvent,
+        task,
+        output: dict | None,
+    ) -> None:
+        """Expose nested analysis progress while the outer analyze step runs.
+
+        Link ingestion is one user-facing workflow, but job analysis itself has
+        meaningful internal stages. Projecting those stages as prefixed steps
+        gives the UI a heartbeat during slow LLM calls without coupling the
+        frontend to coordinator internals.
+        """
+        step_name = f"analysis_{task.id}"
+        if event.event == "started":
+            self.coordinator.repository.start_agent_task_step(task_id, step_name, task.description)
+        elif event.event == "completed":
+            output = output or {}
+            self.coordinator.repository.complete_agent_task_step(task_id, step_name, output.get("summary"))
+        elif event.event == "failed":
+            self.coordinator.repository.fail_agent_task_step(
+                task_id,
+                step_name,
+                event.detail or task.error_type or "Analysis stage failed.",
+            )
+        elif event.event == "blocked":
+            self.coordinator.repository.fail_agent_task_step(
+                task_id,
+                step_name,
+                event.detail or "Blocked by failed analysis dependency.",
             )
 
     def _sync_run_to_agent_task(self, task_id: str, run: WorkflowRun) -> None:
