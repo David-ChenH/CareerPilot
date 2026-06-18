@@ -13,6 +13,7 @@ It is designed for people who want a private, hackable career assistant they can
 - Save jobs into a local SQLite application tracker.
 - Regenerate saved analysis while preserving application status and analysis history.
 - Chat globally across your profile, saved jobs, and local chat history.
+- Ask the global assistant to run approved local actions such as comparing saved jobs, generating prep plans, generating resume drafts, or updating profile memory after confirmation.
 - Chat about a specific saved job or an unsaved analysis preview.
 - Enable optional OpenAI web search for current company or interview context.
 - Generate interview prep plans with daily checklist items.

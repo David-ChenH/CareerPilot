@@ -953,6 +953,112 @@ def _execute_planned_action(
             None,
         )
 
+    if action.name == "generate_prep_plan":
+        job_id = action.arguments.job_id
+        if job_id is not None and coordinator.repository.get_job(job_id) is None:
+            return (
+                ActionExecutionResult(
+                    action_name=action.name,
+                    status=ActionExecutionStatus.REJECTED,
+                    summary=f"Rejected prep-plan generation: saved job `{job_id}` was not found.",
+                ),
+                None,
+            )
+
+        timeline_days = action.arguments.timeline_days or 14
+        hours_per_day = action.arguments.hours_per_day or 2
+        plan = PrepPlanWorkflowRunner(
+            profile=coordinator.profile_store.load_model(),
+            jobs=coordinator.repository.list_jobs(),
+            coding_problems=coordinator.repository.list_leetcode_problems(),
+        ).run(
+            PrepPlanWorkflowRequest(
+                timeline_days=timeline_days,
+                hours_per_day=max(hours_per_day, 0.5),
+                focus=action.arguments.focus,
+                job_id=job_id,
+                use_llm=request.use_llm,
+            )
+        )
+        saved = coordinator.repository.save_prep_plan(plan)
+        return (
+            ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.EXECUTED,
+                summary=f"Generated prep plan `{saved.title}`.",
+                details={
+                    "prep_plan_id": saved.id,
+                    "title": saved.title,
+                    "timeline_days": saved.timeline_days,
+                    "hours_per_day": saved.hours_per_day,
+                    "job_id": job_id,
+                },
+            ),
+            None,
+        )
+
+    if action.name == "generate_resume":
+        job_id = action.arguments.job_id
+        detail = coordinator.repository.get_job(job_id) if job_id is not None else None
+        if job_id is not None and detail is None:
+            return (
+                ActionExecutionResult(
+                    action_name=action.name,
+                    status=ActionExecutionStatus.REJECTED,
+                    summary=f"Rejected resume generation: saved job `{job_id}` was not found.",
+                ),
+                None,
+            )
+
+        job = detail.job if detail else None
+        role_title = (action.arguments.role_title or (job.title if job else "") or "").strip()
+        if not role_title:
+            return (
+                ActionExecutionResult(
+                    action_name=action.name,
+                    status=ActionExecutionStatus.REJECTED,
+                    summary="Rejected resume generation: no target role was provided.",
+                ),
+                None,
+            )
+        company = (action.arguments.company or (job.company if job else None) or "").strip() or None
+        artifact = generate_resume_artifact(
+            profile=coordinator.profile_store.load_model(),
+            role_title=role_title,
+            company=company,
+            job=job,
+            notes=action.arguments.notes,
+            use_llm=request.use_llm,
+        )
+        resume = coordinator.repository.save_resume_version(
+            ResumeVersion(
+                role_title=role_title,
+                company=company,
+                job_id=job_id,
+                notes=action.arguments.notes,
+                draft=artifact.draft.model_dump(mode="json"),
+                provenance=artifact.provenance,
+            ),
+            artifact.pdf,
+        )
+        return (
+            ActionExecutionResult(
+                action_name=action.name,
+                status=ActionExecutionStatus.EXECUTED,
+                summary=f"Generated resume version for `{role_title}`.",
+                details={
+                    "resume_id": resume.id,
+                    "role_title": role_title,
+                    "company": company,
+                    "job_id": job_id,
+                },
+            ),
+            None,
+        )
+
+    if action.name == "compare_saved_jobs":
+        return (_compare_saved_jobs(action.arguments.job_ids), None)
+
     return (
         ActionExecutionResult(
             action_name=action.name,
@@ -999,6 +1105,83 @@ def _planned_action_response(plan: AssistantPlan, results: list[ActionExecutionR
         return "\n".join(lines)
 
     return plan.clarification_question or plan.intent_summary or "I reviewed the request."
+
+
+def _compare_saved_jobs(job_ids: list[int]) -> ActionExecutionResult:
+    saved_jobs = coordinator.repository.list_jobs()
+    if job_ids:
+        requested = set(job_ids)
+        jobs = [job for job in saved_jobs if job.id in requested]
+        missing = sorted(requested - {job.id for job in jobs if job.id is not None})
+        if missing:
+            return ActionExecutionResult(
+                action_name="compare_saved_jobs",
+                status=ActionExecutionStatus.REJECTED,
+                summary=f"Could not compare saved jobs because these job ids were not found: {missing}.",
+            )
+    else:
+        jobs = [
+            job
+            for job in saved_jobs
+            if job.status
+            in {
+                ApplicationStatus.DISCOVERED,
+                ApplicationStatus.INTERESTED,
+                ApplicationStatus.APPLIED,
+                ApplicationStatus.INTERVIEWING,
+                ApplicationStatus.OFFER,
+            }
+        ]
+
+    if not jobs:
+        return ActionExecutionResult(
+            action_name="compare_saved_jobs",
+            status=ActionExecutionStatus.REJECTED,
+            summary="No saved jobs are available to compare yet.",
+        )
+
+    ranked = sorted(jobs, key=_job_comparison_rank, reverse=True)
+    top_lines = [
+        (
+            f"{index}. {job.title or 'Untitled role'} at {job.company or 'Unknown company'} "
+            f"({job.priority}, score {job.fit_score}, {job.application_type.value})"
+        )
+        for index, job in enumerate(ranked[:5], start=1)
+    ]
+    return ActionExecutionResult(
+        action_name="compare_saved_jobs",
+        status=ActionExecutionStatus.EXECUTED,
+        summary="Compared saved jobs by priority, fit score, application status, and application type.\n"
+        + "\n".join(top_lines),
+        details={
+            "ranked_jobs": [
+                {
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                    "priority": job.priority,
+                    "fit_score": job.fit_score,
+                    "status": job.status.value,
+                    "application_type": job.application_type.value,
+                }
+                for job in ranked
+            ]
+        },
+    )
+
+
+def _job_comparison_rank(job: JobRecord) -> tuple[int, int, int, int]:
+    priority_rank = {"high": 3, "medium": 2, "low": 1}.get(job.priority, 0)
+    status_rank = {
+        ApplicationStatus.INTERVIEWING: 5,
+        ApplicationStatus.OFFER: 4,
+        ApplicationStatus.APPLIED: 3,
+        ApplicationStatus.INTERESTED: 2,
+        ApplicationStatus.DISCOVERED: 1,
+        ApplicationStatus.REJECTED: 0,
+    }.get(job.status, 0)
+    application_type_rank = 1 if job.application_type.value == "internal_transfer" else 0
+    return (priority_rank, job.fit_score, status_rank, application_type_rank)
 
 
 def _start_job_ingest_task(request: BackgroundJobIngestRequest) -> AgentTask:

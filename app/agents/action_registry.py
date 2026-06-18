@@ -36,6 +36,21 @@ class ActionRegistry:
                 required_arguments=("proposed_updates",),
                 requires_approval=lambda _action: True,
             ),
+            "generate_prep_plan": ActionMetadata(
+                name="generate_prep_plan",
+                description="Generate and save an interview preparation plan.",
+                requires_approval=lambda _action: True,
+            ),
+            "generate_resume": ActionMetadata(
+                name="generate_resume",
+                description="Generate and save a targeted resume version.",
+                required_arguments=("resume_target",),
+                requires_approval=lambda _action: True,
+            ),
+            "compare_saved_jobs": ActionMetadata(
+                name="compare_saved_jobs",
+                description="Compare saved jobs and rank them for the user's current goals.",
+            ),
         }
 
     def is_allowed(self, action_name: str) -> bool:
@@ -83,4 +98,6 @@ def _is_missing_argument(action: AssistantPlannedAction, argument: str) -> bool:
         return action.arguments.save is None
     if argument == "proposed_updates":
         return not action.arguments.proposed_updates.to_updates()
+    if argument == "resume_target":
+        return not (action.arguments.role_title or "").strip() and action.arguments.job_id is None
     return True

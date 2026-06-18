@@ -13,7 +13,7 @@ The target portfolio story is:
 | Local app foundation | Complete | FastAPI backend, React workbench, SQLite persistence, local profile memory. |
 | Single-job analysis | Complete foundation | URL/paste analysis, LLM structured extraction, required semantic scoring, guidance, evidence, canonical fit labels. |
 | Application tracker | Complete foundation | Save, delete, status updates, analysis history, review-first refresh. |
-| Chat | In progress | Global and job-scoped chat, local history, optional web search mode, LLM planner contracts for chat-invoked actions. |
+| Chat | In progress | Global and job-scoped chat, local history, optional web search mode, LLM planner with allow-listed actions for job ingestion, profile updates, prep plans, resumes, and saved-job comparison. |
 | Profile and resume portal | Complete foundation | Resume upload/paste proposals, explicit profile save flow, audit records. |
 | Prep plans and resume drafts | In progress | Prep plans now run through the workflow executor with trace/evaluation artifacts; resume generation remains direct. |
 | Workflow runtime | In progress | Minimal DAG executor remains the native baseline; prep-plan workflows now prefer LangGraph when installed and record runtime metadata. |
@@ -23,9 +23,9 @@ The target portfolio story is:
 ## Next Priorities
 
 1. Make chat a planner-driven action surface.
-   - Use the LLM planner for open-ended chat intent instead of deterministic string matching.
-   - Keep backend validation, allow-listed tools, and approval requirements outside the model.
-   - Add a richer confirmation UI for mutating actions such as saving jobs, updating profile memory, generating resume versions, and saving prep plans.
+   - Current foundation: the LLM planner proposes typed actions, and the backend validates action names, required arguments, and approval policy.
+   - Supported actions now include job ingestion, profile memory updates, prep-plan generation, resume generation, and saved-job comparison.
+   - Next: add a richer confirmation UI for mutating actions instead of relying on plain-text confirmation replies.
 
 2. Move LangGraph into one real workflow early.
    - Keep the native executor as a learning baseline and fallback.

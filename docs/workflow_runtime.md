@@ -82,6 +82,12 @@ Workflow    -> approved graph of tools
 Executor    -> runtime
 ```
 
+The global assistant follows the same boundary. The LLM planner can propose
+actions such as `generate_prep_plan`, `generate_resume`, or
+`compare_saved_jobs`, but execution still goes through an application-owned
+registry. Mutating actions require backend-enforced confirmation before they
+write to profile memory, saved jobs, prep plans, or resume versions.
+
 ## Next Runtime Capabilities
 
 The next useful additions are:
@@ -176,11 +182,12 @@ Each prep-plan workflow artifact records:
 Recommended transition sequence:
 
 1. Use the LLM assistant planner for open-ended chat intent.
-2. Run the prep-plan workflow through the `WorkflowRuntime` boundary.
-3. Use LangGraph as the primary runtime for prep-plan generation once the dependency is installed.
-4. Add approval pause/resume with LangGraph interrupts.
-5. Add retries, model routing, cache keys, and cost accounting behind the runtime boundary.
-6. Persist workflow runs/checkpoints in queryable tables after the API contract stabilizes.
+2. Run assistant-planned actions through the allow-listed action registry.
+3. Run the prep-plan workflow through the `WorkflowRuntime` boundary.
+4. Use LangGraph as the primary runtime for prep-plan generation once the dependency is installed.
+5. Add approval pause/resume with LangGraph interrupts.
+6. Add retries, model routing, cache keys, and cost accounting behind the runtime boundary.
+7. Persist workflow runs/checkpoints in queryable tables after the API contract stabilizes.
 
 ## Interview Framing
 

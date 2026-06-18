@@ -57,6 +57,14 @@ class AssistantActionArguments(BaseModel):
     url: str | None = None
     save: bool = False
     proposed_updates: ProfileUpdateArguments = Field(default_factory=ProfileUpdateArguments)
+    timeline_days: int | None = Field(default=None, ge=1, le=365)
+    hours_per_day: float | None = Field(default=None, ge=0.25, le=24)
+    focus: str | None = None
+    job_id: int | None = None
+    role_title: str | None = None
+    company: str | None = None
+    notes: str | None = None
+    job_ids: list[int] = Field(default_factory=list)
 
 
 class AssistantPlannedAction(BaseModel):
@@ -125,8 +133,9 @@ def plan_assistant_actions_with_llm(
                         "clarification or confirmation prompt. Interpret user intent semantically, including typos, "
                         "multi-intent messages, and follow-up confirmations. Return multiple actions when the user "
                         "asks for multiple distinct tasks. Use only these action names: ingest_job_from_url, "
-                        "update_profile_memory. Every action must include an arguments object with url, save, and "
-                        "proposed_updates fields; use null, false, or empty lists for fields that do not apply. "
+                        "update_profile_memory, generate_prep_plan, generate_resume, compare_saved_jobs. "
+                        "Every action must include an arguments object with all schema fields; use null, false, "
+                        "or empty lists for fields that do not apply. "
                         "Return answer_only with no actions for ordinary questions, strategy "
                         "discussion, or requests that require a conversational answer. Return needs_clarification "
                         "when the target object or requested action is ambiguous. Return rejected only for unsafe or "
@@ -140,7 +149,13 @@ def plan_assistant_actions_with_llm(
                         "learning_goals, must_have, nice_to_have, avoid, unknown_or_to_confirm. Profile memory "
                         "updates always require approval. Set "
                         "approval_confirmed=true only when the latest user message clearly confirms a previously "
-                        "proposed profile update. Never invent unsupported action names or generated code."
+                        "proposed profile update. For generate_prep_plan, use timeline_days, hours_per_day, "
+                        "focus, and optional job_id. It saves a prep plan, so approval is required. For "
+                        "generate_resume, use role_title, company, optional job_id, and notes. It saves a resume "
+                        "version, so approval is required. For compare_saved_jobs, use job_ids when the user "
+                        "mentions specific saved jobs; otherwise leave job_ids empty to compare active saved jobs. "
+                        "Comparing jobs is read-only and does not require approval. Never invent unsupported "
+                        "action names or generated code."
                     ),
                 },
                 {

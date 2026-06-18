@@ -422,6 +422,39 @@ def test_action_registry_accepts_confirmed_job_action() -> None:
     assert ActionRegistry().validate_planned_action(action) is None
 
 
+def test_action_registry_requires_confirmation_for_prep_plan_generation() -> None:
+    action = AssistantPlannedAction(
+        name="generate_prep_plan",
+        arguments={"timeline_days": 14, "hours_per_day": 2, "focus": "Kubernetes"},
+        approval_required=True,
+        approval_confirmed=False,
+    )
+
+    result = ActionRegistry().validate_planned_action(action)
+
+    assert result is not None
+    assert result.status == ActionExecutionStatus.NEEDS_CONFIRMATION
+
+
+def test_action_registry_rejects_resume_generation_without_target() -> None:
+    action = AssistantPlannedAction(
+        name="generate_resume",
+        approval_required=True,
+        approval_confirmed=True,
+    )
+
+    result = ActionRegistry().validate_planned_action(action)
+
+    assert result is not None
+    assert result.status == ActionExecutionStatus.REJECTED
+
+
+def test_action_registry_accepts_read_only_job_comparison() -> None:
+    action = AssistantPlannedAction(name="compare_saved_jobs", approval_required=False)
+
+    assert ActionRegistry().validate_planned_action(action) is None
+
+
 def test_action_registry_rejects_unknown_planner_action() -> None:
     action = AssistantPlannedAction(name="run_shell_command")
 
@@ -2339,6 +2372,151 @@ def test_global_chat_planner_updates_profile_after_confirmation(tmp_path: Path, 
     assert len(messages) == 2
     assert messages[0].role == "user"
     assert messages[1].role == "assistant"
+
+
+def test_global_chat_planner_generates_prep_plan_after_confirmation(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
+    local_coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(path=tmp_path / "profile.local.yaml", audit_path=tmp_path / "profile_audit.jsonl"),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+    monkeypatch.setattr(
+        main_app,
+        "plan_assistant_actions_with_llm",
+        lambda **_kwargs: AssistantPlan(
+            intent_summary="Generate a two-week Kubernetes prep plan.",
+            status=AssistantPlanStatus.READY,
+            confidence=0.95,
+            actions=[
+                AssistantPlannedAction(
+                    name="generate_prep_plan",
+                    arguments={"timeline_days": 14, "hours_per_day": 2, "focus": "Kubernetes"},
+                    approval_required=True,
+                    approval_confirmed=True,
+                    confidence=0.95,
+                )
+            ],
+        ),
+    )
+
+    response = main_app.chat_globally(
+        GlobalChatRequest(message="Yes, generate the prep plan.", use_llm=True),
+        BackgroundTasks(),
+    )
+
+    saved_plans = local_coordinator.repository.list_prep_plans()
+    assert response.responder_used == "planner:executed"
+    assert response.action_results[0].status == "executed"
+    assert len(saved_plans) == 1
+    assert saved_plans[0].timeline_days == 14
+    assert saved_plans[0].hours_per_day == 2
+
+
+def test_global_chat_planner_generates_resume_after_confirmation(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
+    local_coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(path=tmp_path / "profile.local.yaml", audit_path=tmp_path / "profile_audit.jsonl"),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+    monkeypatch.setattr(
+        main_app,
+        "plan_assistant_actions_with_llm",
+        lambda **_kwargs: AssistantPlan(
+            intent_summary="Generate a targeted resume.",
+            status=AssistantPlanStatus.READY,
+            confidence=0.95,
+            actions=[
+                AssistantPlannedAction(
+                    name="generate_resume",
+                    arguments={"role_title": "Senior Backend Engineer", "company": "Example AI"},
+                    approval_required=True,
+                    approval_confirmed=True,
+                    confidence=0.95,
+                )
+            ],
+        ),
+    )
+
+    response = main_app.chat_globally(
+        GlobalChatRequest(message="Yes, generate that resume.", use_llm=True),
+        BackgroundTasks(),
+    )
+
+    saved_resumes = local_coordinator.repository.list_resume_versions()
+    assert response.responder_used == "planner:executed"
+    assert response.action_results[0].status == "executed"
+    assert len(saved_resumes) == 1
+    assert saved_resumes[0].role_title == "Senior Backend Engineer"
+    assert saved_resumes[0].company == "Example AI"
+    assert local_coordinator.repository.get_resume_pdf(saved_resumes[0].id).startswith(b"%PDF-")
+
+
+def test_global_chat_planner_compares_saved_jobs_without_confirmation(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
+    local_coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(path=tmp_path / "profile.local.yaml", audit_path=tmp_path / "profile_audit.jsonl"),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+    local_coordinator.repository.save_job(
+        JobRecord(
+            source_url="https://example.com/ai-platform",
+            title="Senior AI Platform Engineer",
+            company="Example AI",
+            description="Build agent workflow infrastructure.",
+            skills=["Python", "Distributed Systems"],
+            fit_score=88,
+            priority="high",
+            status=ApplicationStatus.INTERESTED,
+            application_type=ApplicationType.EXTERNAL_APPLICATION,
+        )
+    )
+    local_coordinator.repository.save_job(
+        JobRecord(
+            source_url="https://example.com/frontend",
+            title="Frontend Engineer",
+            company="Example Web",
+            description="Build React UI.",
+            skills=["React"],
+            fit_score=52,
+            priority="low",
+            status=ApplicationStatus.DISCOVERED,
+            application_type=ApplicationType.EXTERNAL_APPLICATION,
+        )
+    )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+    monkeypatch.setattr(
+        main_app,
+        "plan_assistant_actions_with_llm",
+        lambda **_kwargs: AssistantPlan(
+            intent_summary="Compare saved jobs.",
+            status=AssistantPlanStatus.READY,
+            confidence=0.9,
+            actions=[
+                AssistantPlannedAction(
+                    name="compare_saved_jobs",
+                    arguments={"job_ids": []},
+                    approval_required=False,
+                    approval_confirmed=False,
+                    confidence=0.9,
+                )
+            ],
+        ),
+    )
+
+    response = main_app.chat_globally(
+        GlobalChatRequest(message="Rank my saved jobs.", use_llm=True),
+        BackgroundTasks(),
+    )
+
+    assert response.responder_used == "planner:executed"
+    assert response.action_results[0].status == "executed"
+    assert "Senior AI Platform Engineer" in response.answer
+    assert response.action_results[0].details["ranked_jobs"][0]["title"] == "Senior AI Platform Engineer"
 
 
 def test_global_chat_planner_requires_confirmation_before_profile_update(tmp_path: Path, monkeypatch) -> None:

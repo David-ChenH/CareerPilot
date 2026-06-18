@@ -1455,6 +1455,20 @@ function GlobalAssistantView() {
           };
         });
       }
+      const executedActions = new Set(
+        (response.action_results ?? [])
+          .filter((result) => result.status === "executed")
+          .map((result) => result.action_name)
+      );
+      if (executedActions.has("generate_prep_plan")) {
+        await queryClient.invalidateQueries({ queryKey: ["prep-plans"] });
+      }
+      if (executedActions.has("generate_resume")) {
+        await queryClient.invalidateQueries({ queryKey: ["resumes"] });
+      }
+      if (executedActions.has("update_profile_memory")) {
+        await queryClient.invalidateQueries({ queryKey: ["profile"] });
+      }
       await queryClient.invalidateQueries({ queryKey: ["global-chat", response.session.id] });
       await queryClient.invalidateQueries({ queryKey: ["global-chat-sessions"] });
     }
