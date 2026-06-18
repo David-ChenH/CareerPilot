@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.agents.assistant_planner import ActionExecutionResult, AssistantPlan
+from app.agents.assistant_planner import ActionExecutionResult, AssistantPlan, AssistantPlannedAction
 from app.artifacts import (
     JOB_ANALYSIS_PROMPT_VERSION,
     JOB_ANALYSIS_WORKFLOW_VERSION,
@@ -137,6 +137,7 @@ class GlobalChatRequest(BaseModel):
     session_id: int | None = None
     use_llm: bool = True
     use_web_search: bool = False
+    confirmed_action: AssistantPlannedAction | None = None
 
 
 class GlobalChatResponse(BaseModel):

@@ -752,6 +752,46 @@ def _maybe_run_planned_chat_actions(
     request: GlobalChatRequest,
     background_tasks: BackgroundTasks,
 ) -> GlobalChatResponse | None:
+    if request.confirmed_action is not None:
+        confirmed_action = request.confirmed_action.model_copy(update={"approval_confirmed": True})
+        validation_result = action_registry.validate_planned_action(confirmed_action)
+        if validation_result is not None:
+            results = [validation_result]
+        else:
+            result, task = _execute_planned_action(confirmed_action, request, background_tasks)
+            results = [result]
+            tasks = [task] if task is not None else []
+            plan = AssistantPlan(
+                intent_summary=f"Confirmed action: {confirmed_action.name}.",
+                status=AssistantPlanStatus.READY,
+                actions=[confirmed_action],
+                confidence=confirmed_action.confidence,
+            )
+            return _record_planned_chat_response(
+                request=request,
+                session=_resolve_chat_session(request),
+                answer=_planned_action_response(plan, results),
+                responder_used="planner:confirmed",
+                assistant_plan=plan,
+                action_results=results,
+                actions=tasks,
+            )
+
+        plan = AssistantPlan(
+            intent_summary=f"Confirmed action: {confirmed_action.name}.",
+            status=AssistantPlanStatus.READY,
+            actions=[confirmed_action],
+            confidence=confirmed_action.confidence,
+        )
+        return _record_planned_chat_response(
+            request=request,
+            session=_resolve_chat_session(request),
+            answer=_planned_action_response(plan, results),
+            responder_used="planner:confirmed_validation",
+            assistant_plan=plan,
+            action_results=results,
+        )
+
     if not request.use_llm:
         return None
 

@@ -67,10 +67,12 @@ import {
   updateJobStatus
 } from "./api";
 import type {
+  ActionExecutionResult,
   ApplicationStatus,
   AnalysisFeedbackType,
   AgentTask,
   AgentTaskStep,
+  AssistantPlannedAction,
   EvidenceItem,
   GlobalChatMessage,
   GlobalChatSession,
@@ -95,6 +97,11 @@ type AppView = "dashboard" | "analyze" | "applications" | "prep" | "leetcode" | 
 type PrepSeed = { nonce: number; focus: string; jobId?: number | null };
 type ResumeSeed = { nonce: number; roleTitle: string; company?: string | null; jobId?: number | null; notes: string };
 type AnalysisRefreshContext = { jobId: number; title: string; sourceUrl: string };
+type PendingActionConfirmation = {
+  id: string;
+  action: AssistantPlannedAction;
+  result: ActionExecutionResult;
+};
 
 const statuses: ApplicationStatus[] = [
   "discovered",
@@ -1412,6 +1419,7 @@ function GlobalAssistantView() {
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [draftMessages, setDraftMessages] = useState<GlobalChatMessage[]>([]);
   const [actionTasksBySession, setActionTasksBySession] = useState<Record<number, string[]>>({});
+  const [pendingConfirmationsBySession, setPendingConfirmationsBySession] = useState<Record<number, PendingActionConfirmation[]>>({});
   const sessionsQuery = useQuery({
     queryKey: ["global-chat-sessions"],
     queryFn: listGlobalChatSessions
@@ -1439,12 +1447,28 @@ function GlobalAssistantView() {
     }
   });
   const chatMutation = useMutation({
-    mutationFn: (content: string) =>
-      sendGlobalChat({ message: content, session_id: activeSessionId, use_web_search: useWebSearch }),
+    mutationFn: ({ content, confirmedAction }: { content: string; confirmedAction?: AssistantPlannedAction }) =>
+      sendGlobalChat({
+        message: content,
+        session_id: activeSessionId,
+        use_web_search: useWebSearch,
+        confirmed_action: confirmedAction ?? null
+      }),
     onSuccess: async (response) => {
       setMessage("");
       setActiveSessionId(response.session.id);
       setDraftMessages([]);
+      const confirmations = buildPendingConfirmations(response.action_results ?? [], response.assistant_plan?.actions ?? []);
+      setPendingConfirmationsBySession((current) => {
+        const existing = current[response.session.id] ?? [];
+        const retained = existing.filter(
+          (pending) => !response.action_results?.some((result) => result.action_name === pending.action.name && result.status !== "needs_confirmation")
+        );
+        return {
+          ...current,
+          [response.session.id]: confirmations.length > 0 ? mergePendingConfirmations(retained, confirmations) : retained
+        };
+      });
       if (response.actions.length > 0) {
         setActionTasksBySession((current) => {
           const existing = current[response.session.id] ?? [];
@@ -1498,7 +1522,7 @@ function GlobalAssistantView() {
         citations: []
       }
     ]);
-    chatMutation.mutate(trimmed);
+    chatMutation.mutate({ content: trimmed });
   }
 
   function startFreshChat() {
@@ -1507,9 +1531,47 @@ function GlobalAssistantView() {
     setMessage("");
   }
 
+  function confirmAction(pending: PendingActionConfirmation) {
+    if (chatMutation.isPending) {
+      return;
+    }
+    const content = `Confirm ${formatActionName(pending.action.name)}`;
+    setDraftMessages((current) => [
+      ...current,
+      {
+        id: -Date.now(),
+        session_id: activeSessionId,
+        role: "user",
+        content,
+        used_web_search: false,
+        citations: []
+      }
+    ]);
+    setPendingConfirmationsBySession((current) => ({
+      ...current,
+      [activeSessionId ?? 0]: (current[activeSessionId ?? 0] ?? []).filter((item) => item.id !== pending.id)
+    }));
+    chatMutation.mutate({
+      content,
+      confirmedAction: {
+        ...pending.action,
+        approval_confirmed: true
+      }
+    });
+  }
+
+  function cancelAction(pending: PendingActionConfirmation) {
+    const sessionKey = activeSessionId ?? 0;
+    setPendingConfirmationsBySession((current) => ({
+      ...current,
+      [sessionKey]: (current[sessionKey] ?? []).filter((item) => item.id !== pending.id)
+    }));
+  }
+
   const visibleMessages = activeSessionId === null ? draftMessages : chatQuery.data ?? [];
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const visibleActionTaskIds = activeSessionId === null ? [] : actionTasksBySession[activeSessionId] ?? [];
+  const visibleConfirmations = activeSessionId === null ? [] : pendingConfirmationsBySession[activeSessionId] ?? [];
 
   return (
     <section className="grid gap-5 xl:grid-cols-[300px_minmax(520px,1fr)]">
@@ -1590,6 +1652,15 @@ function GlobalAssistantView() {
           {visibleMessages.map((chatMessage) => (
             <GlobalChatBubble key={chatMessage.id} message={chatMessage} />
           ))}
+          {visibleConfirmations.map((pending) => (
+            <AssistantActionConfirmationCard
+              key={pending.id}
+              pending={pending}
+              disabled={chatMutation.isPending}
+              onCancel={() => cancelAction(pending)}
+              onConfirm={() => confirmAction(pending)}
+            />
+          ))}
           {visibleActionTaskIds.map((taskId) => (
             <ChatActionTaskCard key={taskId} taskId={taskId} />
           ))}
@@ -1622,6 +1693,131 @@ function GlobalAssistantView() {
       </Panel>
     </section>
   );
+}
+
+function buildPendingConfirmations(
+  results: ActionExecutionResult[],
+  actions: AssistantPlannedAction[]
+): PendingActionConfirmation[] {
+  return results
+    .filter((result) => result.status === "needs_confirmation")
+    .map((result, index) => {
+      const action = actions.find((candidate) => candidate.name === result.action_name) ?? {
+        name: result.action_name,
+        arguments: (result.details.arguments as Record<string, unknown> | undefined) ?? {},
+        target_context: null,
+        confidence: 0,
+        approval_required: true,
+        approval_confirmed: false,
+        reason: null
+      };
+      return {
+        id: `${result.action_name}:${stableJson(action.arguments)}:${index}`,
+        action,
+        result
+      };
+    });
+}
+
+function mergePendingConfirmations(
+  existing: PendingActionConfirmation[],
+  incoming: PendingActionConfirmation[]
+): PendingActionConfirmation[] {
+  const merged = [...incoming];
+  const seen = new Set(incoming.map((item) => item.id));
+  for (const item of existing) {
+    if (!seen.has(item.id)) {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function AssistantActionConfirmationCard({
+  disabled,
+  onCancel,
+  onConfirm,
+  pending
+}: {
+  disabled: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  pending: PendingActionConfirmation;
+}) {
+  const visibleArguments = Object.entries(pending.action.arguments ?? {}).filter(([_key, value]) => {
+    if (value === null || value === undefined || value === false) {
+      return false;
+    }
+    if (Array.isArray(value) && value.length === 0) {
+      return false;
+    }
+    if (typeof value === "object" && Object.keys(value as Record<string, unknown>).length === 0) {
+      return false;
+    }
+    return true;
+  });
+
+  return (
+    <div className="ml-auto max-w-[92%] rounded-lg border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Badge tone="warning">Confirmation required</Badge>
+          <h3 className="mt-2 text-sm font-semibold text-slate-950">{formatActionName(pending.action.name)}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{pending.result.summary}</p>
+          {pending.action.reason ? <p className="mt-1 text-xs leading-5 text-slate-500">{pending.action.reason}</p> : null}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button className="secondary-button px-3" type="button" disabled={disabled} onClick={onCancel}>
+            <X size={16} />
+            Cancel
+          </button>
+          <button className="primary-button px-3" type="button" disabled={disabled} onClick={onConfirm}>
+            {disabled ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+            Confirm
+          </button>
+        </div>
+      </div>
+      {visibleArguments.length > 0 ? (
+        <div className="mt-3 grid gap-2 rounded-md border border-amber-200 bg-white/75 p-3">
+          {visibleArguments.map(([key, value]) => (
+            <div className="grid gap-1 text-xs sm:grid-cols-[150px_1fr]" key={key}>
+              <span className="font-semibold uppercase text-slate-500">{titleCase(key.replace(/_/g, " "))}</span>
+              <span className="break-words font-medium text-slate-800">{formatActionArgument(value)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatActionName(actionName: string): string {
+  const labels: Record<string, string> = {
+    ingest_job_from_url: "Save or analyze job link",
+    update_profile_memory: "Update profile memory",
+    generate_prep_plan: "Generate prep plan",
+    generate_resume: "Generate resume version",
+    compare_saved_jobs: "Compare saved jobs"
+  };
+  return labels[actionName] ?? titleCase(actionName.replace(/_/g, " "));
+}
+
+function formatActionArgument(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => formatActionArgument(item)).join(", ");
+  }
+  if (typeof value === "object" && value !== null) {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, Object.keys((value as Record<string, unknown>) ?? {}).sort());
+  } catch {
+    return String(value);
+  }
 }
 
 function ChatSessionButton({

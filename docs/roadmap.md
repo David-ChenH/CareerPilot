@@ -25,7 +25,8 @@ The target portfolio story is:
 1. Make chat a planner-driven action surface.
    - Current foundation: the LLM planner proposes typed actions, and the backend validates action names, required arguments, and approval policy.
    - Supported actions now include job ingestion, profile memory updates, prep-plan generation, resume generation, and saved-job comparison.
-   - Next: add a richer confirmation UI for mutating actions instead of relying on plain-text confirmation replies.
+   - Structured confirmation cards now let users approve exact planned actions instead of relying on the LLM to interpret a plain-text "yes."
+   - Next: persist pending approvals as workflow pauses so they survive refreshes and can map cleanly to LangGraph interrupts.
 
 2. Move LangGraph into one real workflow early.
    - Keep the native executor as a learning baseline and fallback.

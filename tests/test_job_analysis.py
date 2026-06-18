@@ -2414,6 +2414,36 @@ def test_global_chat_planner_generates_prep_plan_after_confirmation(tmp_path: Pa
     assert saved_plans[0].hours_per_day == 2
 
 
+def test_global_chat_structured_confirmation_executes_without_replanning(tmp_path: Path, monkeypatch) -> None:
+    import app.main as main_app
+
+    local_coordinator = JobSearchCoordinator(
+        profile_store=ProfileStore(path=tmp_path / "profile.local.yaml", audit_path=tmp_path / "profile_audit.jsonl"),
+        repository=JobRepository(tmp_path / "jobs.sqlite3"),
+    )
+    monkeypatch.setattr(main_app, "coordinator", local_coordinator)
+
+    response = main_app.chat_globally(
+        GlobalChatRequest(
+            message="Confirm generate prep plan.",
+            use_llm=False,
+            confirmed_action=AssistantPlannedAction(
+                name="generate_prep_plan",
+                arguments={"timeline_days": 7, "hours_per_day": 1, "focus": "system design"},
+                approval_required=True,
+                approval_confirmed=True,
+            ),
+        ),
+        BackgroundTasks(),
+    )
+
+    saved_plans = local_coordinator.repository.list_prep_plans()
+    assert response.responder_used == "planner:confirmed"
+    assert response.action_results[0].status == "executed"
+    assert len(saved_plans) == 1
+    assert saved_plans[0].timeline_days == 7
+
+
 def test_global_chat_planner_generates_resume_after_confirmation(tmp_path: Path, monkeypatch) -> None:
     import app.main as main_app
 

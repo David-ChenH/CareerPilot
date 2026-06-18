@@ -88,6 +88,12 @@ actions such as `generate_prep_plan`, `generate_resume`, or
 registry. Mutating actions require backend-enforced confirmation before they
 write to profile memory, saved jobs, prep plans, or resume versions.
 
+Confirmation is structured. The UI sends the exact planned action back as
+`confirmed_action`, and the backend marks only that action as approved before
+running the same registry validation and executor path. This avoids asking the
+LLM to reinterpret a vague "yes" message and keeps the approval boundary
+testable.
+
 ## Next Runtime Capabilities
 
 The next useful additions are:
@@ -185,7 +191,7 @@ Recommended transition sequence:
 2. Run assistant-planned actions through the allow-listed action registry.
 3. Run the prep-plan workflow through the `WorkflowRuntime` boundary.
 4. Use LangGraph as the primary runtime for prep-plan generation once the dependency is installed.
-5. Add approval pause/resume with LangGraph interrupts.
+5. Persist pending approvals and map them to LangGraph interrupts.
 6. Add retries, model routing, cache keys, and cost accounting behind the runtime boundary.
 7. Persist workflow runs/checkpoints in queryable tables after the API contract stabilizes.
 

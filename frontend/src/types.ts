@@ -215,6 +215,7 @@ export type GlobalChatRequest = {
   message: string;
   session_id?: number | null;
   use_web_search: boolean;
+  confirmed_action?: AssistantPlannedAction | null;
 };
 
 export type AssistantPlannedAction = {
