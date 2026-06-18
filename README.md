@@ -6,13 +6,11 @@ CareerPilot helps analyze job posts, compare role fit, track applications, gener
 
 The project is also a backend/AI-platform portfolio piece: typed LLM contracts, bounded tool execution, workflow DAGs, traceable background tasks, local persistence, and eval-driven iteration.
 
-## Screenshots
-
-**Dashboard command center**
+The workspace opens on a command-center dashboard for the application pipeline, repeated skill signals, and next actions.
 
 ![CareerPilot dashboard](docs/assets/careerpilot-dashboard.png)
 
-**Saved analysis workspace**
+From there, each saved role can expand into a focused analysis workspace with fit rationale, prep guidance, resume positioning, and scoped job chat.
 
 ![CareerPilot saved analysis view](docs/assets/careerpilot-saved-analysis.jpg)
 
